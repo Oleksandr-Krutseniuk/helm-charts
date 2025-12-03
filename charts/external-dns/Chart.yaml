@@ -1,4 +1,4 @@
-name: common
+name: external-dns
 version: 0.0.1
 appVersion: 0.18.0
 apiVersion: v2

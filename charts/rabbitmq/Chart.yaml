@@ -6,7 +6,7 @@ description: RabbitMQ is an open source general-purpose message broker that is d
   for consistent, highly-available messaging scenarios (both synchronous and asynchronous).
 type: application
 sources:
-  - https://github.com/code-tool/helm-charts/tree/main/charts/pgbouncer
+  - https://github.com/code-tool/helm-charts/tree/main/charts/rabbitmq
 dependencies:
   - name: common
     repository: https://code-tool.github.io/helm-charts

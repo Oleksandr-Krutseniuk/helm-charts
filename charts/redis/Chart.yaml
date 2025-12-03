@@ -7,9 +7,8 @@ description: Redis(R) is an open source, advanced key-value store. It is often r
   and sorted sets.
 type: application
 sources:
-  - https://github.com/code-tool/helm-charts/tree/main/charts/pgbouncer
+  - https://github.com/code-tool/helm-charts/tree/main/charts/rabbitmq
 dependencies:
   - name: common
     repository: https://code-tool.github.io/helm-charts
     version: 0.x.x
-

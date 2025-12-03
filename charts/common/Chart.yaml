@@ -1,0 +1,9 @@
+name: common
+# version should be equal to appVersion
+version: 0.0.1
+appVersion: 0.0.1
+apiVersion: v2
+description: A library Helm chart for common logic
+type: library
+sources:
+  - https://github.com/code-tool/helm-charts/tree/main/charts/common

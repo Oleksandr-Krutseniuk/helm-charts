@@ -10,9 +10,10 @@ import (
 )
 
 var defaultSetValues = map[string]string{
-	"commitSha": "ed5e844826ce4be1711b05c6a9940a85c8326868",
-	"rollme":    "false",
-	"itIsTest":  "true",
+	"commitSha":             "ed5e844826ce4be1711b05c6a9940a85c8326868",
+	"rollme":                "false",
+	"itIsTest":              "true",
+	"global.redis.password": "test",
 }
 
 func TestGoldenDefault(t *testing.T) {
@@ -61,6 +62,123 @@ func TestGoldenDefault(t *testing.T) {
 		SetValues: defaultSetValues,
 		ValuesFiles: []string{
 			"../../values/default.values.yaml",
+		},
+	})
+}
+
+func TestGolden01(t *testing.T) {
+	t.Parallel()
+
+	chartPath, err := filepath.Abs("../../..")
+	require.NoError(t, err)
+
+	suite.Run(t, &golden.TemplateGoldenTest{
+		ChartPath:      chartPath,
+		Release:        "golden-file-test",
+		Namespace:      "test-namespace",
+		GoldenFileName: "01",
+		Templates: []string{
+			"templates/configmap.yaml",
+			"templates/headless-svc.yaml",
+			"templates/health-configmap.yaml",
+			"templates/master/serviceaccount.yaml",
+			"templates/metrics-svc.yaml",
+			"templates/networkpolicy.yaml",
+			"templates/replicas/serviceaccount.yaml",
+			"templates/scripts-configmap.yaml",
+			"templates/sentinel/service.yaml",
+			"templates/sentinel/statefulset.yaml",
+			"templates/servicemonitor.yaml",
+		},
+		SetValues: defaultSetValues,
+		ValuesFiles: []string{
+			"../../values/01.values.yaml",
+		},
+	})
+}
+
+func TestGolden02(t *testing.T) {
+	t.Parallel()
+
+	chartPath, err := filepath.Abs("../../..")
+	require.NoError(t, err)
+
+	suite.Run(t, &golden.TemplateGoldenTest{
+		ChartPath:      chartPath,
+		Release:        "golden-file-test",
+		Namespace:      "test-namespace",
+		GoldenFileName: "02",
+		Templates: []string{
+			"templates/configmap.yaml",
+			"templates/headless-svc.yaml",
+			"templates/health-configmap.yaml",
+			"templates/master/application.yaml",
+			"templates/master/serviceaccount.yaml",
+			"templates/master/service.yaml",
+			"templates/metrics-svc.yaml",
+			"templates/networkpolicy.yaml",
+			"templates/replicas/hpa.yaml",
+			"templates/replicas/serviceaccount.yaml",
+			"templates/replicas/service.yaml",
+			"templates/replicas/statefulset.yaml",
+			"templates/scripts-configmap.yaml",
+			"templates/servicemonitor.yaml",
+		},
+		SetValues: defaultSetValues,
+		ValuesFiles: []string{
+			"../../values/02.values.yaml",
+		},
+	})
+}
+
+func TestGolden03(t *testing.T) {
+	t.Parallel()
+
+	chartPath, err := filepath.Abs("../../..")
+	require.NoError(t, err)
+
+	suite.Run(t, &golden.TemplateGoldenTest{
+		ChartPath:      chartPath,
+		Release:        "golden-file-test",
+		Namespace:      "test-namespace",
+		GoldenFileName: "03",
+		Templates: []string{
+			"templates/configmap.yaml",
+			"templates/headless-svc.yaml",
+			"templates/health-configmap.yaml",
+			"templates/master/serviceaccount.yaml",
+			"templates/metrics-svc.yaml",
+			"templates/networkpolicy.yaml",
+			"templates/prometheusrule.yaml",
+			"templates/replicas/serviceaccount.yaml",
+			"templates/scripts-configmap.yaml",
+			"templates/sentinel/service.yaml",
+			"templates/sentinel/statefulset.yaml",
+		},
+		SetValues: defaultSetValues,
+		ValuesFiles: []string{
+			"../../values/03.values.yaml",
+		},
+	})
+}
+
+func TestGoldenExtraDeploy(t *testing.T) {
+	t.Parallel()
+
+	chartPath, err := filepath.Abs("../../..")
+	require.NoError(t, err)
+
+	suite.Run(t, &golden.TemplateGoldenTest{
+		ChartPath:      chartPath,
+		Release:        "golden-file-test",
+		Namespace:      "test-namespace",
+		GoldenFileName: "extradeploy",
+		Templates: []string{
+			"templates/extra-list.yaml",
+		},
+		SetValues: defaultSetValues,
+		ValuesFiles: []string{
+			"../../values/extradeploy.values.yaml",
 		},
 	})
 }

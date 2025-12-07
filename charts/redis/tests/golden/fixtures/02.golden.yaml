@@ -13,9 +13,7 @@ metadata:
 data:
   redis.conf: |-
     # User-supplied common configuration:
-    # Enable AOF https://redis.io/topics/persistence#append-only-file
-    appendonly yes
-    # Disable RDB persistence, AOF persistence already enabled.
+    appendonly no
     save ""
     # End of common configuration
   master.conf: |-
@@ -175,7 +173,7 @@ metadata:
     app.kubernetes.io/version: 7.2.1
     app.kubernetes.io/component: master
 spec:
-  replicas: 1
+  replicas: 0
   selector:
     matchLabels:
       app.kubernetes.io/instance: golden-file-test
@@ -193,10 +191,12 @@ spec:
         app.kubernetes.io/version: 7.2.1
         app.kubernetes.io/component: master
       annotations:
-        checksum/configmap: 86bcc953bb473748a3d3dc60b7c11f34e60c93519234d4c37f42e22ada559d47
+        checksum/configmap: b80a98d43003b6ba444715c5099f8debc2981ec5c6f2de25b6b3b46c414885c3
         checksum/health: aff24913d801436ea469d8d374b2ddb3ec4c43ee7ab24663d5f8ff1a1b6991a9
-        checksum/scripts: 9bb06d90585ca668429d0a386024400cc3abb2ad25880d8778c0fb3dbae1762f
-        checksum/secret: d0dcd6c58ce883d1b2344b0775f9916196691b92532fe52518940c9fbabc2c59
+        checksum/scripts: 4701be183cddc941c49ce1b9e00df4bd7c93e93fafd1beb4ee2f27d296d797b1
+        checksum/secret: 44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a
+        prometheus.io/port: "9121"
+        prometheus.io/scrape: "true"
     spec:
       
       securityContext:
@@ -225,7 +225,7 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
         - name: redis
-          image: docker.io/bitnami/redis:8.2.1-debian-12-r0
+          image: docker.io/redis/redis-stack:7.4.0-v3
           imagePullPolicy: "IfNotPresent"
           securityContext:
             allowPrivilegeEscalation: false
@@ -250,9 +250,7 @@ spec:
             - name: REDIS_REPLICATION_MODE
               value: master
             - name: ALLOW_EMPTY_PASSWORD
-              value: "no"
-            - name: REDIS_PASSWORD_FILE
-              value: "/opt/bitnami/redis/secrets/redis-password"
+              value: "yes"
             - name: REDIS_TLS_ENABLED
               value: "no"
             - name: REDIS_PORT
@@ -298,6 +296,79 @@ spec:
               mountPath: /opt/bitnami/redis/etc/
             - name: tmp
               mountPath: /tmp
+        - name: metrics
+          image: docker.io/bitnamilegacy/redis-exporter:1.61.0-debian-12-r2
+          imagePullPolicy: "IfNotPresent"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsGroup: 1001
+            runAsNonRoot: true
+            runAsUser: 1001
+            seLinuxOptions: {}
+            seccompProfile:
+              type: RuntimeDefault
+          command:
+            - /bin/bash
+            - -c
+            - |
+              if [[ -f '/secrets/redis-password' ]]; then
+              export REDIS_PASSWORD=$(cat /secrets/redis-password)
+              fi
+              redis_exporter
+          env:
+            - name: REDIS_ALIAS
+              value: golden-file-test-redis
+          ports:
+            - name: metrics
+              containerPort: 9121
+          livenessProbe:
+            failureThreshold: 5
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 5
+            tcpSocket:
+              port: metrics
+          readinessProbe:
+            failureThreshold: 3
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 1
+            httpGet:
+              path: /
+              port: metrics
+          resources:
+            requests:
+              cpu: 100m
+              ephemeral-storage: 2Gi
+          volumeMounts:
+            - name: redis-password
+              mountPath: /secrets/
+      initContainers:
+        - name: init-sysctl
+          image: docker.io/bitnamilegacy/os-shell:12-debian-12-r51
+          imagePullPolicy: "IfNotPresent"
+          securityContext:
+            privileged: true
+            runAsUser: 0
+          command:
+            - /bin/sh
+            - -c
+            - |-
+              install_packages procps
+              sysctl -w net.core.somaxconn=10000
+              echo never > /host-sys/kernel/mm/transparent_hugepage/enabled
+          resources:
+            requests:
+              ephemeral-storage: 6Gi
+          volumeMounts:
+            - name: host-sys
+              mountPath: /host-sys
       volumes:
         - name: start-scripts
           configMap:
@@ -316,6 +387,9 @@ spec:
         - name: config
           configMap:
             name: golden-file-test-redis-configuration
+        - name: host-sys
+          hostPath:
+            path: /sys
         - name: redis-tmp-conf
           emptyDir: {}
         - name: tmp
@@ -375,6 +449,29 @@ spec:
     app.kubernetes.io/name: redis
     app.kubernetes.io/component: master
 ---
+# Source: redis/templates/metrics-svc.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: golden-file-test-redis-metrics
+  namespace: "test-namespace"
+  labels:
+    app.kubernetes.io/instance: golden-file-test
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/version: 7.2.1
+    app.kubernetes.io/component: metrics
+spec:
+  type: ClusterIP
+  ports:
+    - name: http-metrics
+      port: 
+      protocol: TCP
+      targetPort: metrics
+  selector:
+    app.kubernetes.io/instance: golden-file-test
+    app.kubernetes.io/name: redis
+---
 # Source: redis/templates/networkpolicy.yaml
 kind: NetworkPolicy
 apiVersion: networking.k8s.io/v1
@@ -411,6 +508,36 @@ spec:
     # Allow inbound connections
     - ports:
         - port: 6379
+    # Allow prometheus scrapes for metrics
+    - ports:
+        - port: 9121
+---
+# Source: redis/templates/replicas/hpa.yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: golden-file-test-redis-replicas
+  namespace: "test-namespace"
+  labels:
+    app.kubernetes.io/instance: golden-file-test
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/version: 7.2.1
+    app.kubernetes.io/component: replica
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: golden-file-test-redis-replicas
+  minReplicas: 2
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 45
 ---
 # Source: redis/templates/replicas/serviceaccount.yaml
 apiVersion: v1
@@ -464,7 +591,6 @@ metadata:
     app.kubernetes.io/version: 7.2.1
     app.kubernetes.io/component: replica
 spec:
-  replicas: 3
   selector:
     matchLabels:
       app.kubernetes.io/instance: golden-file-test
@@ -482,10 +608,12 @@ spec:
         app.kubernetes.io/version: 7.2.1
         app.kubernetes.io/component: replica
       annotations:
-        checksum/configmap: 86bcc953bb473748a3d3dc60b7c11f34e60c93519234d4c37f42e22ada559d47
+        checksum/configmap: b80a98d43003b6ba444715c5099f8debc2981ec5c6f2de25b6b3b46c414885c3
         checksum/health: aff24913d801436ea469d8d374b2ddb3ec4c43ee7ab24663d5f8ff1a1b6991a9
-        checksum/scripts: 9bb06d90585ca668429d0a386024400cc3abb2ad25880d8778c0fb3dbae1762f
-        checksum/secret: d0dcd6c58ce883d1b2344b0775f9916196691b92532fe52518940c9fbabc2c59
+        checksum/scripts: 4701be183cddc941c49ce1b9e00df4bd7c93e93fafd1beb4ee2f27d296d797b1
+        checksum/secret: 44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a
+        prometheus.io/port: "9121"
+        prometheus.io/scrape: "true"
     spec:
       
       securityContext:
@@ -499,22 +627,27 @@ spec:
         podAffinity:
           
         podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - podAffinityTerm:
-                labelSelector:
-                  matchLabels:
-                    app.kubernetes.io/instance: golden-file-test
-                    app.kubernetes.io/name: redis
-                    app.kubernetes.io/component: replica
-                topologyKey: kubernetes.io/hostname
-              weight: 1
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app.kubernetes.io/instance: golden-file-test
+                  app.kubernetes.io/name: redis
+                  app.kubernetes.io/component: replica
+              topologyKey: kubernetes.io/hostname
         nodeAffinity:
           
+      nodeSelector:
+        dedicated: redispool
+      tolerations:
+        - effect: NoSchedule
+          key: dedicated
+          operator: Equal
+          value: RedisPool
       enableServiceLinks: true
       terminationGracePeriodSeconds: 30
       containers:
         - name: redis
-          image: docker.io/bitnami/redis:8.2.1-debian-12-r0
+          image: docker.io/redis/redis-stack:7.4.0-v3
           imagePullPolicy: "IfNotPresent"
           securityContext:
             allowPrivilegeEscalation: false
@@ -539,15 +672,11 @@ spec:
             - name: REDIS_REPLICATION_MODE
               value: replica
             - name: REDIS_MASTER_HOST
-              value: golden-file-test-redis-master-0.golden-file-test-redis-headless.test-namespace.svc.cluster.local
+              value: golden-file-test-redis-master.test-namespace.svc.cluster.local
             - name: REDIS_MASTER_PORT_NUMBER
               value: "6379"
             - name: ALLOW_EMPTY_PASSWORD
-              value: "no"
-            - name: REDIS_PASSWORD_FILE
-              value: "/opt/bitnami/redis/secrets/redis-password"
-            - name: REDIS_MASTER_PASSWORD_FILE
-              value: "/opt/bitnami/redis/secrets/redis-password"
+              value: "yes"
             - name: REDIS_TLS_ENABLED
               value: "no"
             - name: REDIS_PORT
@@ -556,16 +685,22 @@ spec:
             - name: redis
               containerPort: 6379
           startupProbe:
-            failureThreshold: 22
-            initialDelaySeconds: 10
-            periodSeconds: 10
+            exec:
+              command:
+              - /bin/bash
+              - -c
+              - |
+                redis-cli INFO replication -p $REDIS_PORT \
+                | grep -Eq '^(master_sync_(total_bytes|read_bytes|left_bytes|perc):|master_link_status:down)' \
+                && exit 1 || exit 0
+            failureThreshold: 600
+            initialDelaySeconds: 1
+            periodSeconds: 1
             successThreshold: 1
             timeoutSeconds: 5
-            tcpSocket:
-              port: redis
           livenessProbe:
-            initialDelaySeconds: 20
-            periodSeconds: 5
+            initialDelaySeconds: 30
+            periodSeconds: 20
             timeoutSeconds: 6
             successThreshold: 1
             failureThreshold: 5
@@ -575,16 +710,21 @@ spec:
                 - -c
                 - /health/ping_liveness_local_and_master.sh 5
           readinessProbe:
-            initialDelaySeconds: 20
-            periodSeconds: 5
-            timeoutSeconds: 2
+            initialDelaySeconds: 0
+            periodSeconds: 20
+            timeoutSeconds: 6
             successThreshold: 1
             failureThreshold: 5
             exec:
               command:
                 - sh
                 - -c
-                - /health/ping_readiness_local_and_master.sh 1
+                - /health/ping_readiness_local_and_master.sh 5
+          resources:
+            requests:
+              cpu: 1
+              ephemeral-storage: 20Gi
+              memory: 6G
           volumeMounts:
             - name: start-scripts
               mountPath: /opt/bitnami/scripts/start-scripts
@@ -598,6 +738,79 @@ spec:
               mountPath: /opt/bitnami/redis/mounted-etc
             - name: redis-tmp-conf
               mountPath: /opt/bitnami/redis/etc
+        - name: metrics
+          image: docker.io/bitnamilegacy/redis-exporter:1.61.0-debian-12-r2
+          imagePullPolicy: "IfNotPresent"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsGroup: 1001
+            runAsNonRoot: true
+            runAsUser: 1001
+            seLinuxOptions: {}
+            seccompProfile:
+              type: RuntimeDefault
+          command:
+            - /bin/bash
+            - -c
+            - |
+              if [[ -f '/secrets/redis-password' ]]; then
+              export REDIS_PASSWORD=$(cat /secrets/redis-password)
+              fi
+              redis_exporter
+          env:
+            - name: REDIS_ALIAS
+              value: golden-file-test-redis
+          ports:
+            - name: metrics
+              containerPort: 9121
+          livenessProbe:
+            failureThreshold: 5
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 5
+            tcpSocket:
+              port: metrics
+          readinessProbe:
+            failureThreshold: 3
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 1
+            httpGet:
+              path: /
+              port: metrics
+          resources:
+            requests:
+              cpu: 100m
+              ephemeral-storage: 2Gi
+          volumeMounts:
+            - name: redis-password
+              mountPath: /secrets/
+      initContainers:
+        - name: init-sysctl
+          image: docker.io/bitnamilegacy/os-shell:12-debian-12-r51
+          imagePullPolicy: "IfNotPresent"
+          securityContext:
+            privileged: true
+            runAsUser: 0
+          command:
+            - /bin/sh
+            - -c
+            - |-
+              install_packages procps
+              sysctl -w net.core.somaxconn=10000
+              echo never > /host-sys/kernel/mm/transparent_hugepage/enabled
+          resources:
+            requests:
+              ephemeral-storage: 6Gi
+          volumeMounts:
+            - name: host-sys
+              mountPath: /host-sys
       volumes:
         - name: start-scripts
           configMap:
@@ -616,23 +829,13 @@ spec:
         - name: config
           configMap:
             name: golden-file-test-redis-configuration
+        - name: host-sys
+          hostPath:
+            path: /sys
         - name: redis-tmp-conf
           emptyDir: {}
-  volumeClaimTemplates:
-    - apiVersion: v1
-      kind: PersistentVolumeClaim
-      metadata:
-        name: redis-data
-        labels:
-          app.kubernetes.io/instance: golden-file-test
-          app.kubernetes.io/name: redis
-          app.kubernetes.io/component: replica
-      spec:
-        accessModes:
-          - "ReadWriteOnce"
-        resources:
-          requests:
-            storage: "8Gi"
+        - name: redis-data
+          emptyDir: {}
 ---
 # Source: redis/templates/scripts-configmap.yaml
 apiVersion: v1
@@ -657,8 +860,7 @@ data:
         cp /opt/bitnami/redis/mounted-etc/redis.conf /opt/bitnami/redis/etc/redis.conf
     fi
     ARGS=("--port" "${REDIS_PORT}")
-    ARGS+=("--requirepass" "${REDIS_PASSWORD}")
-    ARGS+=("--masterauth" "${REDIS_PASSWORD}")
+    ARGS+=("--protected-mode" "no")
     ARGS+=("--include" "/opt/bitnami/redis/etc/redis.conf")
     ARGS+=("--include" "/opt/bitnami/redis/etc/master.conf")
     exec redis-server "${ARGS[@]}"
@@ -709,15 +911,21 @@ data:
     echo "replica-announce-ip $(get_full_hostname "$HOSTNAME")" >> /opt/bitnami/redis/etc/replica.conf
     ARGS=("--port" "${REDIS_PORT}")
     ARGS+=("--replicaof" "${REDIS_MASTER_HOST}" "${REDIS_MASTER_PORT_NUMBER}")
-    ARGS+=("--requirepass" "${REDIS_PASSWORD}")
-    ARGS+=("--masterauth" "${REDIS_MASTER_PASSWORD}")
+    ARGS+=("--protected-mode" "no")
     ARGS+=("--include" "/opt/bitnami/redis/etc/redis.conf")
     ARGS+=("--include" "/opt/bitnami/redis/etc/replica.conf")
+    ARGS+=("--loadmodule /opt/redis-stack/lib/redisearch.so")
+    ARGS+=("--protected-mode no")
+    ARGS+=("--replica-priority 0")
+    ARGS+=("--replica-announced no")
+    ARGS+=("--databases 64")
+    ARGS+=("--io-threads 2")
+    ARGS+=("--repl-diskless-load on-empty-db")
     exec redis-server "${ARGS[@]}"
 ---
-# Source: redis/templates/secret.yaml
-apiVersion: v1
-kind: Secret
+# Source: redis/templates/servicemonitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
 metadata:
   name: golden-file-test-redis
   namespace: "test-namespace"
@@ -726,6 +934,21 @@ metadata:
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/name: redis
     app.kubernetes.io/version: 7.2.1
-type: Opaque
-data:
-  redis-password: "dGVzdA=="
+spec:
+  endpoints:
+    - port: http-metrics
+      interval: 10s
+      relabelings:
+      - sourceLabels:
+        - __meta_kubernetes_pod_name
+        targetLabel: instance
+  
+  
+  namespaceSelector:
+    matchNames:
+      - test-namespace
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: golden-file-test
+      app.kubernetes.io/name: redis
+      app.kubernetes.io/component: metrics

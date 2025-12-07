@@ -1,0 +1,116 @@
+architecture: replication
+auth:
+  enabled: false
+clusterDomain: cluster.local
+commonConfiguration: |-
+  appendonly no
+  save ""
+image:
+  registry: docker.io
+  repository: redis/redis-stack
+  tag: 7.4.0-v3
+master:
+  count: 0
+metrics:
+  enabled: true
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/redis-exporter
+    tag: 1.61.0-debian-12-r2
+  resources:
+    requests:
+      cpu: 100m
+      ephemeral-storage: 2Gi
+  serviceMonitor:
+    enabled: true
+    interval: 10s
+    relabellings:
+    - sourceLabels:
+      - __meta_kubernetes_pod_name
+      targetLabel: instance
+replica:
+  autoscaling:
+    enabled: true
+    maxReplicas: 20
+    minReplicas: 2
+    targetCPU: 45
+  customStartupProbe:
+    exec:
+      command:
+      - /bin/bash
+      - -c
+      - |
+        redis-cli INFO replication -p $REDIS_PORT \
+        | grep -Eq '^(master_sync_(total_bytes|read_bytes|left_bytes|perc):|master_link_status:down)' \
+        && exit 1 || exit 0
+    failureThreshold: 600
+    initialDelaySeconds: 1
+    periodSeconds: 1
+    successThreshold: 1
+    timeoutSeconds: 5
+  externalMaster:
+    enabled: true
+    host: external-intance-hostname.example.com
+  extraFlags:
+  - --loadmodule /opt/redis-stack/lib/redisearch.so
+  - --protected-mode no
+  - --replica-priority 0
+  - --replica-announced no
+  - --databases 64
+  - --io-threads 2
+  - --repl-diskless-load on-empty-db
+  livenessProbe:
+    enabled: true
+    failureThreshold: 5
+    initialDelaySeconds: 30
+    periodSeconds: 20
+    successThreshold: 1
+    timeoutSeconds: 5
+  nodeSelector:
+    dedicated: redispool
+  persistence:
+    enabled: false
+  podAntiAffinityPreset: hard
+  readinessProbe:
+    enabled: true
+    failureThreshold: 5
+    initialDelaySeconds: 0
+    periodSeconds: 20
+    successThreshold: 1
+    timeoutSeconds: 5
+  replicaCount: 3
+  resources:
+    requests:
+      cpu: 1
+      ephemeral-storage: 20Gi
+      memory: 6G
+  startupProbe:
+    enabled: false
+  tolerations:
+  - effect: NoSchedule
+    key: dedicated
+    operator: Equal
+    value: RedisPool
+sentinel:
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/redis-sentinel
+    tag: 7.2.5-debian-12-r2
+sysctl:
+  command:
+  - /bin/sh
+  - -c
+  - |-
+    install_packages procps
+    sysctl -w net.core.somaxconn=10000
+    echo never > /host-sys/kernel/mm/transparent_hugepage/enabled
+  enabled: true
+  image:
+    repository: bitnamilegacy/os-shell
+  mountHostSys: true
+  resources:
+    requests:
+      ephemeral-storage: 6Gi
+volumePermissions:
+  image:
+    repository: bitnamilegacy/os-shell

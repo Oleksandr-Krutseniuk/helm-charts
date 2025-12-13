@@ -117,12 +117,19 @@ spec:
           args: {{- include "common.tplvalues.render" (dict "value" .Values.replica.args "context" $) | nindent 12 }}
           {{- else }}
           args:
+          {{- if .Values.image.bitnami }}
             - -c
             - /opt/bitnami/scripts/start-scripts/start-replica.sh
+          {{ else }}
+            - -c
+            - /etc/redis_scripts/start-scripts/start-replica.sh
           {{- end }}
+          {{ end -}}
           env:
+            {{- if .Values.image.bitnami }}
             - name: BITNAMI_DEBUG
-              value: {{ ternary "true" "false" (or .Values.image.debug .Values.diagnosticMode.enabled) | quote }}
+              value: {{ ternary "true" "false" (or .Values.image.debug .Values.diagnosticMode.enabled) | quote -}}
+            {{ end }}
             - name: REDIS_REPLICATION_MODE
               value: replica
             - name: REDIS_MASTER_HOST
@@ -137,10 +144,17 @@ spec:
               value: {{ ternary "no" "yes" .Values.auth.enabled | quote }}
             {{- if .Values.auth.enabled }}
             {{- if .Values.auth.usePasswordFiles }}
+              {{- if .Values.image.bitnami }}
             - name: REDIS_PASSWORD_FILE
               value: "/opt/bitnami/redis/secrets/redis-password"
             - name: REDIS_MASTER_PASSWORD_FILE
               value: "/opt/bitnami/redis/secrets/redis-password"
+              {{- else }}
+            - name: REDIS_PASSWORD_FILE
+              value: "/etc/redis/secrets/redis-password"
+            - name: REDIS_MASTER_PASSWORD_FILE
+              value: "/etc/redis/secrets/redis-password"
+              {{- end }}
             {{- else }}
             - name: REDIS_PASSWORD
               valueFrom:
@@ -235,13 +249,23 @@ spec:
           resources: {{- toYaml .Values.replica.resources | nindent 12 }}
           {{- end }}
           volumeMounts:
+            {{- if .Values.image.bitnami }}
             - name: start-scripts
               mountPath: /opt/bitnami/scripts/start-scripts
+            {{ else }}
+            - name: start-scripts
+              mountPath: /etc/redis_scripts/start-scripts
+            {{- end }}
             - name: health
               mountPath: /health
             {{- if .Values.auth.usePasswordFiles }}
+              {{- if .Values.image.bitnami }}
             - name: redis-password
               mountPath: /opt/bitnami/redis/secrets/
+              {{ else }}
+            - name: redis-password
+              mountPath: /etc/redis/secrets/
+            {{- end }}
             {{- end }}
             - name: redis-data
               mountPath: /data
@@ -250,14 +274,27 @@ spec:
               {{- else if .Values.replica.persistence.subPathExpr }}
               subPathExpr: {{ .Values.replica.persistence.subPathExpr }}
               {{- end }}
+            {{- if .Values.image.bitnami }}
             - name: config
               mountPath: /opt/bitnami/redis/mounted-etc
             - name: redis-tmp-conf
               mountPath: /opt/bitnami/redis/etc
+              {{ else }}
+            - name: config
+              mountPath: /etc/mounted/redis/
+            - name: redis-tmp-conf
+              mountPath: /etc/redis/
+              {{- end }}
             {{- if .Values.tls.enabled }}
+              {{ if .Values.image.bitnami }}
             - name: redis-certificates
               mountPath: /opt/bitnami/redis/certs
               readOnly: true
+              {{ else }}
+            - name: redis-certificates
+              mountPath: /opt/certs
+              readOnly: true
+              {{- end }}
             {{- end }}
             {{- if .Values.replica.extraVolumeMounts }}
             {{- include "common.tplvalues.render" ( dict "value" .Values.replica.extraVolumeMounts "context" $ ) | nindent 12 }}
@@ -351,9 +388,15 @@ spec:
               mountPath: /secrets/
             {{- end }}
             {{- if .Values.tls.enabled }}
+              {{ if .Values.image.bitnami }}
             - name: redis-certificates
               mountPath: /opt/bitnami/redis/certs
               readOnly: true
+              {{ else }}
+            - name: redis-certificates
+              mountPath: /opt/certs
+              readOnly: true
+              {{- end }}
             {{- end }}
             {{- if .Values.metrics.extraVolumeMounts }}
             {{- include "common.tplvalues.render" ( dict "value" .Values.metrics.extraVolumeMounts "context" $ ) | nindent 12 }}

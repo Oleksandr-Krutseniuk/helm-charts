@@ -116,28 +116,40 @@ spec:
           args: {{- include "common.tplvalues.render" (dict "value" .Values.master.args "context" $) | nindent 12 }}
           {{- else }}
           args:
+          {{- if .Values.image.bitnami }}
             - -c
             - /opt/bitnami/scripts/start-scripts/start-master.sh
-          {{- end }}
+          {{- else }}
+            - -c
+            - /etc/redis_scripts/start-scripts/start-master.sh
+          {{ end -}}
+          {{ end -}}
           env:
+          {{- if .Values.image.bitnami }}
             - name: BITNAMI_DEBUG
               value: {{ ternary "true" "false" (or .Values.image.debug .Values.diagnosticMode.enabled) | quote }}
+          {{ end }}
             - name: REDIS_REPLICATION_MODE
               value: master
             - name: ALLOW_EMPTY_PASSWORD
               value: {{ ternary "no" "yes" .Values.auth.enabled | quote }}
             {{- if .Values.auth.enabled }}
             {{- if .Values.auth.usePasswordFiles }}
+            {{- if .Values.image.bitnami }}
             - name: REDIS_PASSWORD_FILE
               value: "/opt/bitnami/redis/secrets/redis-password"
-            {{- else }}
+            {{ else }}
+            - name: REDIS_PASSWORD_FILE
+              value: "/etc/redis/secrets/redis-password"
+            {{ end -}}
+            {{ else }}
             - name: REDIS_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ template "redis.secretName" . }}
                   key: {{ template "redis.secretPasswordKey" . }}
             {{- end }}
-            {{- end }}
+            {{- end -}}
             - name: REDIS_TLS_ENABLED
               value: {{ ternary "yes" "no" .Values.tls.enabled | quote }}
             {{- if .Values.tls.enabled }}
@@ -220,13 +232,26 @@ spec:
           resources: {{- toYaml .Values.master.resources | nindent 12 }}
           {{- end }}
           volumeMounts:
+            {{- if .Values.image.bitnami }}
             - name: start-scripts
               mountPath: /opt/bitnami/scripts/start-scripts
+            {{ else }}
+            - name: start-scripts
+              mountPath: /etc/redis_scripts/start-scripts
+            - name: lib-redis-scripts
+              mountPath: /etc/redis_scripts
+              readOnly: true
+            {{ end -}}
             - name: health
               mountPath: /health
             {{- if .Values.auth.usePasswordFiles }}
+            {{- if .Values.image.bitnami }}
             - name: redis-password
               mountPath: /opt/bitnami/redis/secrets/
+            {{- else }}
+            - name: redis-password
+              mountPath: /etc/redis/secrets/
+            {{- end }}
             {{- end }}
             - name: redis-data
               mountPath: {{ .Values.master.persistence.path }}
@@ -235,16 +260,29 @@ spec:
               {{- else if .Values.master.persistence.subPathExpr }}
               subPathExpr: {{ .Values.master.persistence.subPathExpr }}
               {{- end }}
+              {{- if .Values.image.bitnami }}
             - name: config
               mountPath: /opt/bitnami/redis/mounted-etc
             - name: redis-tmp-conf
-              mountPath: /opt/bitnami/redis/etc/
+              mountPath: /opt/bitnami/redis/etc/redis.conf
+              {{- else }}
+            - name: config
+              mountPath: /etc/mounted/redis/
+            - name: redis-tmp-conf
+              mountPath: /etc/redis/
+              {{- end }}
             - name: tmp
               mountPath: /tmp
             {{- if .Values.tls.enabled }}
+            {{- if .Values.image.bitnami }}
             - name: redis-certificates
               mountPath: /opt/bitnami/redis/certs
               readOnly: true
+            {{ else }}
+            - name: redis-certificates
+              mountPath: /opt/certs
+              readOnly: true
+            {{ end }}
             {{- end }}
             {{- if .Values.master.extraVolumeMounts }}
             {{- include "common.tplvalues.render" ( dict "value" .Values.master.extraVolumeMounts "context" $ ) | nindent 12 }}
@@ -338,9 +376,15 @@ spec:
               mountPath: /secrets/
             {{- end }}
             {{- if .Values.tls.enabled }}
+              {{ if .Values.image.bitnami }}
             - name: redis-certificates
               mountPath: /opt/bitnami/redis/certs
               readOnly: true
+              {{ else }}
+            - name: redis-certificates
+              mountPath: /opt/certs
+              readOnly: true
+              {{ end }}
             {{- end }}
             {{- if .Values.metrics.extraVolumeMounts }}
             {{- include "common.tplvalues.render" ( dict "value" .Values.metrics.extraVolumeMounts "context" $ ) | nindent 12 }}
@@ -410,6 +454,49 @@ spec:
           configMap:
             name: {{ printf "%s-scripts" (include "common.names.fullname" .) }}
             defaultMode: 0755
+        {{- if not .Values.image.bitnami }}
+        - name: lib-redis-scripts
+          configMap:
+            name: {{ printf "%s-lib-redis-scripts" (include "common.names.fullname" .) }}
+            defaultMode: 0755
+            items:
+            - key: libbitnami.sh
+              path: libbitnami.sh
+            - key: libfile.sh
+              path: libfile.sh
+            - key: libfs.sh
+              path: libfs.sh
+            - key: libhook.sh
+              path: libhook.sh
+            - key: liblog.sh
+              path: liblog.sh
+            - key: libnet.sh
+              path: libnet.sh
+            - key: libos.sh
+              path: libos.sh
+            - key: libpersistence.sh
+              path: libpersistence.sh
+            - key: libredis.sh
+              path: libredis.sh
+            - key: libservice.sh
+              path: libservice.sh
+            - key: libvalidations.sh
+              path: libvalidations.sh
+            - key: libversion.sh
+              path: libversion.sh
+            - key: libwebserver.sh
+              path: libwebserver.sh
+            - key: redis-env.sh
+              path: redis-env.sh
+            - key: redis-entrypoint.sh
+              path: redis/entrypoint.sh
+            - key: redis-postunpack.sh
+              path: redis/postunpack.sh
+            - key: redis-run.sh
+              path: redis/run.sh
+            - key: redis-setup.sh
+              path: redis/setup.sh
+        {{- end }}
         - name: health
           configMap:
             name: {{ printf "%s-health" (include "common.names.fullname" .) }}

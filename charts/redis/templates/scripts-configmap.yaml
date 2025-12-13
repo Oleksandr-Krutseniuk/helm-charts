@@ -12,9 +12,15 @@ data:
   start-node.sh: |
     #!/bin/bash
 
+    {{ if .Values.image.bitnami -}}
     . /opt/bitnami/scripts/libos.sh
     . /opt/bitnami/scripts/liblog.sh
     . /opt/bitnami/scripts/libvalidations.sh
+    {{- else }}
+    . /etc/redis_scripts/libos.sh
+    . /etc/redis_scripts/liblog.sh
+    . /etc/redis_scripts/libvalidations.sh
+    {{- end }}
 
     get_port() {
         hostname="$1"
@@ -122,6 +128,7 @@ data:
     redisRetVal=$?
 
     {{- if .Values.sentinel.persistence.enabled }}
+    {{ if .Values.image.bitnami }}
     if [[ -f /opt/bitnami/redis-sentinel/etc/sentinel.conf ]]; then
         master_in_persisted_conf="$(awk '/monitor/ {print $4}' /opt/bitnami/redis-sentinel/etc/sentinel.conf)"
         master_port_in_persisted_conf="$(awk '/monitor/ {print $5}' /opt/bitnami/redis-sentinel/etc/sentinel.conf)"
@@ -129,6 +136,15 @@ data:
         debug "$(cat /opt/bitnami/redis-sentinel/etc/sentinel.conf | grep monitor)"
         touch /opt/bitnami/redis-sentinel/etc/.node_read
     fi
+    {{- else }}
+    if [[ -f /etc/redis-sentinel/sentinel.conf ]]; then
+        master_in_persisted_conf="$(awk '/monitor/ {print $4}' /etc/redis-sentinel/sentinel.conf)"
+        master_port_in_persisted_conf="$(awk '/monitor/ {print $5}' /etc/redis-sentinel/sentinel.conf)"
+        info "Found previous master ${master_in_persisted_conf}:${master_port_in_persisted_conf} in /etc/redis-sentinel/sentinel.conf"
+        debug "$(cat /etc/redis-sentinel/sentinel.conf | grep monitor)"
+        touch /etc/redis-sentinel/.node_read
+    fi
+    {{- end }}
     {{- end }}
 
     if [[ $redisRetVal -ne 0 ]]; then
@@ -183,7 +199,7 @@ data:
       REDIS_MASTER_HOST="$REDIS_EXTERNAL_MASTER_HOST"
       REDIS_MASTER_PORT_NUMBER="${REDIS_EXTERNAL_MASTER_PORT}"
     fi
-
+    {{ if .Values.image.bitnami }}
     if [[ -f /opt/bitnami/redis/mounted-etc/replica.conf ]];then
         cp /opt/bitnami/redis/mounted-etc/replica.conf /opt/bitnami/redis/etc/replica.conf
     fi
@@ -195,6 +211,19 @@ data:
     echo "" >> /opt/bitnami/redis/etc/replica.conf
     echo "replica-announce-port $REDISPORT" >> /opt/bitnami/redis/etc/replica.conf
     echo "replica-announce-ip $(get_full_hostname "$HOSTNAME")" >> /opt/bitnami/redis/etc/replica.conf
+    {{ else }}
+    if [[ -f /etc/mounted/redis/replica.conf ]];then
+        cp /etc/mounted/redis/replica.conf /etc/redis/replica.conf
+    fi
+
+    if [[ -f /etc/mounted/redis/redis.conf ]];then
+        cp /etc/mounted/redis/redis.conf /etc/redis/redis.conf
+    fi
+
+    echo "" >> /etc/redis/replica.conf
+    echo "replica-announce-port $REDISPORT" >> /etc/redis/replica.conf
+    echo "replica-announce-ip $(get_full_hostname "$HOSTNAME")" >> /etc/redis/replica.conf
+    {{ end }}
 
     {{- if .Values.tls.enabled }}
     ARGS=("--port" "0")
@@ -221,8 +250,13 @@ data:
     {{- else }}
     ARGS+=("--protected-mode" "no")
     {{- end }}
+    {{- if .Values.image.bitnami }}
     ARGS+=("--include" "/opt/bitnami/redis/etc/replica.conf")
     ARGS+=("--include" "/opt/bitnami/redis/etc/redis.conf")
+    {{- else }}
+    ARGS+=("--include" "/etc/redis/replica.conf")
+    ARGS+=("--include" "/etc/redis/redis.conf")
+    {{ end }}
     {{- if .Values.replica.extraFlags }}
     {{- range .Values.replica.extraFlags }}
     ARGS+=({{ . | quote }})
@@ -241,10 +275,15 @@ data:
 
   start-sentinel.sh: |
     #!/bin/bash
-
+    {{ if .Values.image.bitnami }}
     . /opt/bitnami/scripts/libos.sh
     . /opt/bitnami/scripts/libvalidations.sh
     . /opt/bitnami/scripts/libfile.sh
+    {{- else }}
+    . /etc/redis_scripts/libos.sh
+    . /etc/redis_scripts/libvalidations.sh
+    . /etc/redis_scripts/libfile.sh
+    {{ end }}
 
     HEADLESS_SERVICE="{{ template "common.names.fullname" . }}-headless.{{ .Release.Namespace }}.svc.{{ .Values.clusterDomain }}"
     REDIS_SERVICE="{{ template "common.names.fullname" . }}.{{ .Release.Namespace }}.svc.{{ .Values.clusterDomain }}"
@@ -310,11 +349,18 @@ data:
         value="${value//&/\\&}"
         value="${value//\?/\\?}"
         [[ "$value" = "" ]] && value="\"$value\""
-
+        {{- if .Values.image.bitnami }}
         replace_in_file "/opt/bitnami/redis-sentinel/etc/sentinel.conf" "^#*\s*${key} .*" "${key} ${value}" false
+        {{ else }}
+        replace_in_file "/etc/redis-sentinel/sentinel.conf" "^#*\s*${key} .*" "${key} ${value}" false
+        {{- end }}
     }
     sentinel_conf_add() {
+        {{- if .Values.image.bitnami }}
         echo $'\n'"$@" >> "/opt/bitnami/redis-sentinel/etc/sentinel.conf"
+        {{- else }}
+        echo $'\n'"$@" >> "/etc/redis-sentinel/sentinel.conf"
+        {{- end }}
     }
     host_id() {
         echo "$1" | openssl sha1 | awk '{print $2}'
@@ -334,6 +380,7 @@ data:
     master_in_persisted_conf="$(get_full_hostname "$HOSTNAME")"
 
     {{- if .Values.sentinel.persistence.enabled }}
+    {{ if .Values.image.bitnami }}
     if [[ -f /opt/bitnami/redis-sentinel/etc/sentinel.conf ]]; then
         check_lock_file() {
             [[ -f /opt/bitnami/redis-sentinel/etc/.node_read ]]
@@ -344,6 +391,18 @@ data:
         info "Found previous master $master_in_persisted_conf in /opt/bitnami/redis-sentinel/etc/sentinel.conf"
         debug "$(cat /opt/bitnami/redis-sentinel/etc/sentinel.conf | grep monitor)"
     fi
+    {{ else }}
+    if [[ -f /etc/redis-sentinel/sentinel.conf ]]; then
+        check_lock_file() {
+            [[ -f /etc/redis-sentinel/.node_read ]]
+        }
+        retry_while "check_lock_file"
+        rm -f /etc/redis-sentinel/.node_read
+        master_in_persisted_conf="$(awk '/monitor/ {print $4}' /etc/redis-sentinel/sentinel.conf)"
+        info "Found previous master $master_in_persisted_conf in /etc/redis-sentinel/sentinel.conf"
+        debug "$(cat /etc/redis-sentinel/sentinel.conf | grep monitor)"
+    fi
+    {{- end }}
     {{- end }}
     if ! get_sentinel_master_info && [[ "$master_in_persisted_conf" == "$(get_full_hostname "$HOSTNAME")" ]]; then
         # No master found, lets create a master node
@@ -365,8 +424,13 @@ data:
       REDIS_MASTER_HOST="$REDIS_EXTERNAL_MASTER_HOST"
       REDIS_MASTER_PORT_NUMBER="${REDIS_EXTERNAL_MASTER_PORT}"
     fi
-
+    {{ if .Values.image.bitnami }}
     cp /opt/bitnami/redis-sentinel/mounted-etc/sentinel.conf /opt/bitnami/redis-sentinel/etc/sentinel.conf
+    {{ else }}
+    cp /etc/mounted/redis-sentinel/sentinel.conf /etc/redis-sentinel/sentinel.conf
+    {{ end -}}
+
+    {{ if .Values.image.bitnami }}
     {{- if .Values.auth.enabled }}
     printf "\nsentinel auth-pass %s %s" "{{ .Values.sentinel.masterSet }}" "$REDIS_PASSWORD" >> /opt/bitnami/redis-sentinel/etc/sentinel.conf
     {{- if and .Values.auth.enabled .Values.auth.sentinel }}
@@ -374,6 +438,15 @@ data:
     {{- end }}
     {{- end }}
     printf "\nsentinel myid %s" "$(host_id "$HOSTNAME")" >> /opt/bitnami/redis-sentinel/etc/sentinel.conf
+    {{ else }}
+    {{- if .Values.auth.enabled }}
+    printf "\nsentinel auth-pass %s %s" "{{ .Values.sentinel.masterSet }}" "$REDIS_PASSWORD" >> /etc/redis-sentinel/sentinel.conf
+    {{- if and .Values.auth.enabled .Values.auth.sentinel }}
+    printf "\nrequirepass %s" "$REDIS_PASSWORD" >> /etc/redis-sentinel/sentinel.conf
+    {{- end }}
+    {{- end }}
+    printf "\nsentinel myid %s" "$(host_id "$HOSTNAME")" >> /etc/redis-sentinel/sentinel.conf
+    {{- end }}
 
     if [[ -z "$REDIS_MASTER_HOST" ]] || [[ -z "$REDIS_MASTER_PORT_NUMBER" ]]
     then
@@ -409,6 +482,7 @@ data:
         add_known_replica "$hostname" "$ip"
     done
 
+    {{ if .Values.image.bitnami }}
     echo "" >> /opt/bitnami/redis-sentinel/etc/sentinel.conf
     {{- if not (contains "sentinel announce-hostnames" .Values.sentinel.configuration) }}
     echo "sentinel announce-hostnames yes" >> /opt/bitnami/redis-sentinel/etc/sentinel.conf
@@ -422,6 +496,21 @@ data:
     {{- if not (contains "sentinel announce-ip" .Values.sentinel.configuration) }}
     echo "sentinel announce-ip $(get_full_hostname "$HOSTNAME")" >> /opt/bitnami/redis-sentinel/etc/sentinel.conf
     {{- end }}
+    {{ else -}}
+    echo "" >> /etc/redis-sentinel/sentinel.conf
+    {{- if not (contains "sentinel announce-hostnames" .Values.sentinel.configuration) }}
+    echo "sentinel announce-hostnames yes" >> /etc/redis-sentinel/sentinel.conf
+    {{- end }}
+    {{- if not (contains "sentinel resolve-hostnames" .Values.sentinel.configuration) }}
+    echo "sentinel resolve-hostnames yes" >> /etc/redis-sentinel/sentinel.conf
+    {{- end }}
+    {{- if not (contains "sentinel announce-port" .Values.sentinel.configuration) }}
+    echo "sentinel announce-port $SERVPORT" >> /etc/redis-sentinel/sentinel.conf
+    {{- end }}
+    {{- if not (contains "sentinel announce-ip" .Values.sentinel.configuration) }}
+    echo "sentinel announce-ip $(get_full_hostname "$HOSTNAME")" >> /etc/redis-sentinel/sentinel.conf
+    {{- end }}
+    {{ end -}}
 
     {{- if .Values.tls.enabled }}
     ARGS=("--port" "0")
@@ -438,12 +527,21 @@ data:
     {{- if .Values.sentinel.preExecCmds }}
     {{ .Values.sentinel.preExecCmds | nindent 4 }}
     {{- end }}
+
+    {{- if .Values.image.bitnami }}
     exec redis-server /opt/bitnami/redis-sentinel/etc/sentinel.conf {{- if .Values.tls.enabled }} "${ARGS[@]}" {{- end }} --sentinel
+    {{ else }}
+    exec redis-server /etc/redis-sentinel/sentinel.conf {{- if .Values.tls.enabled }} "${ARGS[@]}" {{- end }} --sentinel
+    {{ end }}
   prestop-sentinel.sh: |
     #!/bin/bash
-
+    {{ if .Values.image.bitnami }}
     . /opt/bitnami/scripts/libvalidations.sh
     . /opt/bitnami/scripts/libos.sh
+    {{ else }}
+    . /etc/redis_scripts/libvalidations.sh
+    . /etc/redis_scripts/libos.sh
+    {{- end }}
 
     HEADLESS_SERVICE="{{ template "common.names.fullname" . }}-headless.{{ .Release.Namespace }}.svc.{{ .Values.clusterDomain }}"
 
@@ -509,9 +607,13 @@ data:
     fi
   prestop-redis.sh: |
     #!/bin/bash
-
+    {{ if .Values.image.bitnami }}
     . /opt/bitnami/scripts/libvalidations.sh
     . /opt/bitnami/scripts/libos.sh
+    {{ else }}
+    . /etc/redis_scripts/libvalidations.sh
+    . /etc/redis_scripts/libos.sh
+    {{- end }}
 
     run_redis_command() {
         if is_boolean_yes "$REDIS_TLS_ENABLED"; then
@@ -600,12 +702,21 @@ data:
     useradd redis
     chown -R redis {{ .Values.master.persistence.path }}
     {{- end }}
+    {{ if .Values.image.bitnami }}
     if [[ -f /opt/bitnami/redis/mounted-etc/master.conf ]];then
         cp /opt/bitnami/redis/mounted-etc/master.conf /opt/bitnami/redis/etc/master.conf
     fi
     if [[ -f /opt/bitnami/redis/mounted-etc/redis.conf ]];then
         cp /opt/bitnami/redis/mounted-etc/redis.conf /opt/bitnami/redis/etc/redis.conf
     fi
+    {{ else }}
+    if [[ -f /etc/mounted/redis/master.conf ]];then
+        cp /etc/mounted/redis/master.conf /etc/redis/master.conf
+    fi
+    if [[ -f /etc/mounted/redis/redis.conf ]];then
+        cp /etc/mounted/redis/redis.conf /etc/redis/redis.conf
+    fi
+    {{ end }}
     {{- if .Values.tls.enabled }}
     ARGS=("--port" "0")
     ARGS+=("--tls-port" "${REDIS_TLS_PORT}")
@@ -625,8 +736,13 @@ data:
     {{- else }}
     ARGS+=("--protected-mode" "no")
     {{- end }}
+    {{ if .Values.image.bitnami }}
     ARGS+=("--include" "/opt/bitnami/redis/etc/redis.conf")
     ARGS+=("--include" "/opt/bitnami/redis/etc/master.conf")
+    {{ else }}
+    ARGS+=("--include" "/etc/redis/redis.conf")
+    ARGS+=("--include" "/etc/redis/master.conf")
+    {{- end }}
     {{- if .Values.master.extraFlags }}
     {{- range .Values.master.extraFlags }}
     ARGS+=({{ . | quote }})
@@ -701,6 +817,7 @@ data:
     useradd redis
     chown -R redis {{ .Values.replica.persistence.path }}
     {{- end }}
+    {{ if .Values.image.bitnami }}
     if [[ -f /opt/bitnami/redis/mounted-etc/replica.conf ]];then
         cp /opt/bitnami/redis/mounted-etc/replica.conf /opt/bitnami/redis/etc/replica.conf
     fi
@@ -711,7 +828,17 @@ data:
     echo "" >> /opt/bitnami/redis/etc/replica.conf
     echo "replica-announce-port $REDISPORT" >> /opt/bitnami/redis/etc/replica.conf
     echo "replica-announce-ip $(get_full_hostname "$HOSTNAME")" >> /opt/bitnami/redis/etc/replica.conf
-
+    {{ else }}
+    if [[ -f /etc/mounted/redis/replica.conf ]];then
+        cp /etc/mounted/redis/replica.conf /etc/redis/replica.conf
+    fi
+    if [[ -f /etc/mounted/redis/redis.conf ]];then
+        cp /etc/mounted/redis/redis.conf /etc/redis/redis.conf
+    fi
+    echo "" >> /etc/redis/replica.conf
+    echo "replica-announce-port $REDISPORT" >> /etc/redis/replica.conf
+    echo "replica-announce-ip $(get_full_hostname "$HOSTNAME")" >> /etc/redis/replica.conf
+    {{ end }}
     {{- if .Values.tls.enabled }}
     ARGS=("--port" "0")
     ARGS+=("--tls-port" "${REDIS_TLS_PORT}")
@@ -733,8 +860,13 @@ data:
     {{- else }}
     ARGS+=("--protected-mode" "no")
     {{- end }}
+    {{- if .Values.image.bitnami }}
     ARGS+=("--include" "/opt/bitnami/redis/etc/redis.conf")
     ARGS+=("--include" "/opt/bitnami/redis/etc/replica.conf")
+    {{- else }}
+    ARGS+=("--include" "/etc/redis/redis.conf")
+    ARGS+=("--include" "/etc/redis/replica.conf")
+    {{- end }}
     {{- if .Values.replica.extraFlags }}
     {{- range .Values.replica.extraFlags }}
     ARGS+=({{ . | quote }})

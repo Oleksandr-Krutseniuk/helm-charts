@@ -1,0 +1,8 @@
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: cron-hpa
+rules:
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers", "horizontalpodautoscalers/status"]
+    verbs: ["get", "patch", "list", "watch", "update"]

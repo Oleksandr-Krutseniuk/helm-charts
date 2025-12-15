@@ -63,12 +63,12 @@ data:
     . /etc/redis_scripts/libredis.sh
     . /etc/redis_scripts/libfs.sh
 
-    for dir in "$REDIS_VOLUME_DIR" "$REDIS_DATA_DIR" "$REDIS_BASE_DIR" "$REDIS_CONF_DIR" "$REDIS_DEFAULT_CONF_DIR"; do
+    for dir in "$REDIS_DATA_DIR" "$REDIS_BASE_DIR" "$REDIS_CONF_DIR" "$REDIS_DEFAULT_CONF_DIR" "${REDIS_BASE_DIR}/tmp" "${REDIS_LOG_DIR}"; do
         ensure_dir_exists "$dir"
     done
-    chmod -R g+rwX /bitnami "$REDIS_VOLUME_DIR" "$REDIS_BASE_DIR"
+    chmod -R g+rwX "$REDIS_BASE_DIR"
 
-    cp "${REDIS_BASE_DIR}/etc/redis-default.conf" "$REDIS_CONF_FILE"
+    cp "${REDIS_BASE_DIR}/redis-default.conf" "$REDIS_CONF_FILE"
     chmod g+rw "$REDIS_CONF_FILE"
     # Default Redis config
     info "Setting Redis config file..."
@@ -87,6 +87,9 @@ data:
     # Copy all initially generated configuration files to the default directory
     # (this is to avoid breaking when entrypoint is being overridden)
     cp -r "${REDIS_CONF_DIR}/"* "$REDIS_DEFAULT_CONF_DIR"
+
+    # Allow others writing in the writable dirs so it works with gid 1001
+    chmod o+w -R "$REDIS_CONF_DIR" "${REDIS_BASE_DIR}/tmp" "${REDIS_LOG_DIR}"
   run.sh: |
     #!/bin/bash
     # Copyright Broadcom, Inc. All Rights Reserved.
@@ -107,7 +110,7 @@ data:
     . /etc/redis_scripts/libredis.sh
 
     # Parse CLI flags to pass to the 'redis-server' call
-    args=("${REDIS_BASE_DIR}/etc/redis.conf" "--daemonize" "no")
+    args=("${REDIS_BASE_DIR}/redis.conf" "--daemonize" "no")
     # Add flags specified via the 'REDIS_EXTRA_FLAGS' environment variable
     read -r -a extra_flags <<< "$REDIS_EXTRA_FLAGS"
     [[ "${#extra_flags[@]}" -gt 0 ]] && args+=("${extra_flags[@]}")
@@ -196,8 +199,7 @@ data:
         info ""
         info "${BOLD}Welcome to the Bitnami ${BITNAMI_APP_NAME} container${RESET}"
         info "Subscribe to project updates by watching ${BOLD}${github_url}${RESET}"
-        info "Submit issues and feature requests at ${BOLD}${github_url}/issues${RESET}"
-        info "Upgrade to Tanzu Application Catalog for production environments to access custom-configured and pre-packaged software components. Gain enhanced features, including Software Bill of Materials (SBOM), CVE scan result reports, and VEX documents. To learn more, visit ${BOLD}https://bitnami.com/enterprise${RESET}"
+        info "${YELLOW}NOTICE: Starting August 28th, 2025, only a limited subset of images/charts will remain available for free. Backup will be available for some time at the 'Bitnami Legacy' repository. More info at https://github.com/bitnami/containers/issues/83267${RESET}"
         info ""
     }
   libfile.sh: |
@@ -466,7 +468,7 @@ data:
     }
 
     ########################
-    # Configure permisions and ownership recursively
+    # Configure permissions and ownership recursively
     # Globals:
     #   None
     # Arguments:
@@ -597,7 +599,14 @@ data:
     #   None
     #########################
     log() {
-        stderr_print "${CYAN}${MODULE:-} ${MAGENTA}$(date "+%T.%2N ")${RESET}${*}"
+        local color_bool="${BITNAMI_COLOR:-true}"
+        # comparison is performed without regard to the case of alphabetic characters
+        shopt -s nocasematch
+        if [[ "$color_bool" = 1 || "$color_bool" =~ ^(yes|true)$ ]]; then
+            stderr_print "${CYAN}${MODULE:-} ${MAGENTA}$(date "+%T.%2N ")${RESET}${*}"
+        else
+            stderr_print "${MODULE:-} $(date "+%T.%2N ")${*}"
+        fi
     }
     ########################
     # Log an 'info' message
@@ -607,7 +616,14 @@ data:
     #   None
     #########################
     info() {
-        log "${GREEN}INFO ${RESET} ==> ${*}"
+        local msg_color=""
+        local color_bool="${BITNAMI_COLOR:-true}"
+        # comparison is performed without regard to the case of alphabetic characters
+        shopt -s nocasematch
+        if [[ "$color_bool" = 1 || "$color_bool" =~ ^(yes|true)$ ]];then
+            msg_color="$GREEN"
+        fi
+        log "${msg_color}INFO ${RESET} ==> ${*}"
     }
     ########################
     # Log message
@@ -617,7 +633,14 @@ data:
     #   None
     #########################
     warn() {
-        log "${YELLOW}WARN ${RESET} ==> ${*}"
+        local msg_color=""
+        local color_bool="${BITNAMI_COLOR:-true}"
+        # comparison is performed without regard to the case of alphabetic characters
+        shopt -s nocasematch
+        if [[ "$color_bool" = 1 || "$color_bool" =~ ^(yes|true)$ ]];then
+            msg_color="$YELLOW"
+        fi
+        log "${msg_color}WARN ${RESET} ==> ${*}"
     }
     ########################
     # Log an 'error' message
@@ -627,7 +650,14 @@ data:
     #   None
     #########################
     error() {
-        log "${RED}ERROR${RESET} ==> ${*}"
+        local msg_color=""
+        local color_bool="${BITNAMI_COLOR:-true}"
+        # comparison is performed without regard to the case of alphabetic characters
+        shopt -s nocasematch
+        if [[ "$color_bool" = 1 || "$color_bool" =~ ^(yes|true)$ ]];then
+            msg_color="$RED"
+        fi
+        log "${msg_color}ERROR${RESET} ==> ${*}"
     }
     ########################
     # Log a 'debug' message
@@ -639,12 +669,16 @@ data:
     #   None
     #########################
     debug() {
-        # 'is_boolean_yes' is defined in libvalidations.sh, but depends on this file so we cannot source it
-        local bool="${BITNAMI_DEBUG:-false}"
+        local msg_color=""
+        local color_bool="${BITNAMI_COLOR:-true}"
         # comparison is performed without regard to the case of alphabetic characters
         shopt -s nocasematch
-        if [[ "$bool" = 1 || "$bool" =~ ^(yes|true)$ ]]; then
-            log "${MAGENTA}DEBUG${RESET} ==> ${*}"
+        if [[ "$color_bool" = 1 || "$color_bool" =~ ^(yes|true)$ ]] ;then
+            msg_color="$MAGENTA"
+        fi
+        local debug_bool="${BITNAMI_DEBUG:-false}"
+        if [[ "$debug_bool" = 1 || "$debug_bool" =~ ^(yes|true)$ ]]; then
+            log "${msg_color}DEBUG${RESET} ==> ${*}"
         fi
     }
 
@@ -681,6 +715,7 @@ data:
 
     # Load Generic Libraries
     . /etc/redis_scripts/liblog.sh
+    . /etc/redis_scripts/libvalidations.sh
 
     # Functions
 
@@ -741,7 +776,12 @@ data:
             error "Could not find any IP address associated to hostname ${hostname}"
             exit 1
         fi
-        echo "${ip_addresses[0]}"
+        # Check if the first IP address is IPv6 to add brackets
+        if validate_ipv6 "${ip_addresses[0]}" ; then
+            echo "[${ip_addresses[0]}]"
+        else
+            echo "${ip_addresses[0]}"
+        fi
     }
 
     ########################
@@ -1650,7 +1690,7 @@ data:
     #########################
     redis_conf_get() {
         local -r key="${1:?missing key}"
-        local -r conf_file="${2:-"${REDIS_BASE_DIR}/etc/redis.conf"}"
+        local -r conf_file="${2:-"${REDIS_BASE_DIR}/redis.conf"}"
 
         if grep -q -E "^\s*$key " "$conf_file"; then
             grep -E "^\s*$key " "$conf_file" | awk '{print $2}'
@@ -1680,9 +1720,9 @@ data:
 
         # Determine whether to enable the configuration for RDB persistence, if yes, do not enable the replacement operation
         if [ "${key}" == "save" ]; then
-            echo "${key} ${value}" >> "${REDIS_BASE_DIR}/etc/redis.conf"
+            echo "${key} ${value}" >> "${REDIS_BASE_DIR}/redis.conf"
         else
-            replace_in_file "${REDIS_BASE_DIR}/etc/redis.conf" "^#*\s*${key} .*" "${key} ${value}" false
+            replace_in_file "${REDIS_BASE_DIR}/redis.conf" "^#*\s*${key} .*" "${key} ${value}" false
         fi
     }
 
@@ -1697,7 +1737,7 @@ data:
     #########################
     redis_conf_unset() {
         local -r key="${1:?missing key}"
-        remove_in_file "${REDIS_BASE_DIR}/etc/redis.conf" "^\s*$key .*" false
+        remove_in_file "${REDIS_BASE_DIR}/redis.conf" "^\s*$key .*" false
     }
 
     ########################
@@ -1710,7 +1750,7 @@ data:
     #   Redis versoon
     #########################
     redis_version() {
-        "${REDIS_BASE_DIR}/bin/redis-cli" --version | grep -E -o "[0-9]+.[0-9]+.[0-9]+"
+        "$REDIS_BIN_DIR/redis-cli" --version | grep -E -o "[0-9]+.[0-9]+.[0-9]+"
     }
 
     ########################
@@ -1783,9 +1823,9 @@ data:
 
         debug "Stopping Redis"
         if am_i_root; then
-            run_as_user "$REDIS_DAEMON_USER" "${REDIS_BASE_DIR}/bin/redis-cli" "${args[@]}" shutdown
+            run_as_user "$REDIS_DAEMON_USER" "$REDIS_BIN_DIR/redis-cli" "${args[@]}" shutdown
         else
-            "${REDIS_BASE_DIR}/bin/redis-cli" "${args[@]}" shutdown
+            "$REDIS_BIN_DIR/redis-cli" "${args[@]}" shutdown
         fi
     }
 
@@ -1901,10 +1941,8 @@ data:
             fi
             wait-for-port --host "$REDIS_MASTER_HOST" "$REDIS_MASTER_PORT_NUMBER"
             [[ -n "$REDIS_MASTER_PASSWORD" ]] && redis_conf_set masterauth "$REDIS_MASTER_PASSWORD"
-            # Starting with Redis 5, use 'replicaof' instead of 'slaveof'. Maintaining both for backward compatibility
-            local parameter="replicaof"
-            [[ $(redis_major_version) -lt 5 ]] && parameter="slaveof"
-            redis_conf_set "$parameter" "$REDIS_MASTER_HOST $REDIS_MASTER_PORT_NUMBER"
+            # Use 'replicaof' (Redis 5+)
+            redis_conf_set "replicaof" "$REDIS_MASTER_HOST $REDIS_MASTER_PORT_NUMBER"
         fi
     }
 
@@ -1941,13 +1979,13 @@ data:
     #   None
     #########################
     redis_configure_permissions() {
-      debug "Ensuring expected directories/files exist"
-      for dir in "${REDIS_BASE_DIR}" "${REDIS_DATA_DIR}" "${REDIS_BASE_DIR}/tmp" "${REDIS_LOG_DIR}"; do
-          ensure_dir_exists "$dir"
-          if am_i_root; then
-              chown "$REDIS_DAEMON_USER:$REDIS_DAEMON_GROUP" "$dir"
-          fi
-      done
+    debug "Ensuring expected directories/files exist"
+    for dir in "${REDIS_BASE_DIR}" "${REDIS_DATA_DIR}" "${REDIS_BASE_DIR}/tmp" "${REDIS_LOG_DIR}"; do
+        ensure_dir_exists "$dir"
+        if am_i_root; then
+            chown "$REDIS_DAEMON_USER:$REDIS_DAEMON_GROUP" "$dir"
+        fi
+    done
     }
 
     ########################
@@ -1960,12 +1998,12 @@ data:
     #   None
     #########################
     redis_override_conf() {
-      if [[ ! -e "${REDIS_MOUNTED_CONF_DIR}/redis.conf" ]]; then
-          # Configure Replication mode
-          if [[ -n "$REDIS_REPLICATION_MODE" ]]; then
-              redis_configure_replication
-          fi
-      fi
+    if [[ ! -e "${REDIS_MOUNTED_CONF_DIR}/redis.conf" ]]; then
+        # Configure Replication mode
+        if [[ -n "$REDIS_REPLICATION_MODE" ]]; then
+            redis_configure_replication
+        fi
+    fi
     }
 
     ########################
@@ -1978,8 +2016,8 @@ data:
     #   None
     #########################
     redis_initialize() {
-      redis_configure_default
-      redis_override_conf
+    redis_configure_default
+    redis_override_conf
     }
 
     #########################
@@ -1996,7 +2034,7 @@ data:
             # Remove all include statements including commented ones
             redis_conf_set include "$REDIS_OVERRIDES_FILE"
             redis_conf_unset "include"
-            echo "include $REDIS_OVERRIDES_FILE" >> "${REDIS_BASE_DIR}/etc/redis.conf"
+            echo "include $REDIS_OVERRIDES_FILE" >> "${REDIS_BASE_DIR}/redis.conf"
         fi
     }
 
@@ -2020,10 +2058,10 @@ data:
 
         # User injected custom configuration
         if [[ -e "${REDIS_MOUNTED_CONF_DIR}/redis.conf" ]]; then
-            if [[ -e "$REDIS_BASE_DIR/etc/redis-default.conf" ]]; then
-                rm "${REDIS_BASE_DIR}/etc/redis-default.conf"
+            if [[ -e "$REDIS_BASE_DIR/redis-default.conf" ]]; then
+                rm "${REDIS_BASE_DIR}/redis-default.conf"
             fi
-            cp "${REDIS_MOUNTED_CONF_DIR}/redis.conf" "${REDIS_BASE_DIR}/etc/redis.conf"
+            cp "${REDIS_MOUNTED_CONF_DIR}/redis.conf" "${REDIS_BASE_DIR}/redis.conf"
         else
             info "Setting Redis config file"
             if is_boolean_yes "$ALLOW_EMPTY_PASSWORD"; then
@@ -2229,80 +2267,6 @@ data:
     }
 
     ########################
-    # Remove a cron configuration file for a given service
-    # Arguments:
-    #   $1 - Service name
-    # Returns:
-    #   None
-    #########################
-    remove_cron_conf() {
-        local service_name="${1:?service name is missing}"
-        local cron_conf_dir="/etc/monit/conf.d"
-        rm -f "${cron_conf_dir}/${service_name}"
-    }
-
-    ########################
-    # Generate a monit configuration file for a given service
-    # Arguments:
-    #   $1 - Service name
-    #   $2 - Pid file
-    #   $3 - Start command
-    #   $4 - Stop command
-    # Flags:
-    #   --disable - Whether to disable the monit configuration
-    # Returns:
-    #   None
-    #########################
-    generate_monit_conf() {
-        local service_name="${1:?service name is missing}"
-        local pid_file="${2:?pid file is missing}"
-        local start_command="${3:?start command is missing}"
-        local stop_command="${4:?stop command is missing}"
-        local monit_conf_dir="/etc/monit/conf.d"
-        local disabled="no"
-
-        # Parse optional CLI flags
-        shift 4
-        while [[ "$#" -gt 0 ]]; do
-            case "$1" in
-                --disable)
-                    disabled="yes"
-                    ;;
-                *)
-                    echo "Invalid command line flag ${1}" >&2
-                    return 1
-                    ;;
-            esac
-            shift
-        done
-
-        is_boolean_yes "$disabled" && conf_suffix=".disabled"
-        mkdir -p "$monit_conf_dir"
-        cat > "${monit_conf_dir}/${service_name}.conf${conf_suffix:-}" <<EOF
-    # Copyright Broadcom, Inc. All Rights Reserved.
-    # SPDX-License-Identifier: APACHE-2.0
-
-    check process ${service_name}
-      with pidfile "${pid_file}"
-      start program = "${start_command}" with timeout 90 seconds
-      stop program = "${stop_command}" with timeout 90 seconds
-    EOF
-    }
-
-    ########################
-    # Remove a monit configuration file for a given service
-    # Arguments:
-    #   $1 - Service name
-    # Returns:
-    #   None
-    #########################
-    remove_monit_conf() {
-        local service_name="${1:?service name is missing}"
-        local monit_conf_dir="/etc/monit/conf.d"
-        rm -f "${monit_conf_dir}/${service_name}.conf"
-    }
-
-    ########################
     # Generate a logrotate configuration file
     # Arguments:
     #   $1 - Service name
@@ -2345,12 +2309,12 @@ data:
     # SPDX-License-Identifier: APACHE-2.0
 
     ${log_path} {
-      ${period}
-      rotate ${rotations}
-      dateext
-      compress
-      copytruncate
-      missingok
+    ${period}
+    rotate ${rotations}
+    dateext
+    compress
+    copytruncate
+    missingok
     $(indent "$extra" 2)
     }
     EOF
@@ -2419,6 +2383,8 @@ data:
         local success_exit_status=""
         local custom_service_content=""
         local working_directory=""
+        local timeout_start_sec="2min"
+        local timeout_stop_sec="30s"
         # Parse CLI flags
         shift
         while [[ "$#" -gt 0 ]]; do
@@ -2437,6 +2403,8 @@ data:
                 | --success-exit-status \
                 | --custom-service-content \
                 | --working-directory \
+                | --timeout-start-sec \
+                | --timeout-stop-sec \
                 )
                     var_name="$(echo "$1" | sed -e "s/^--//" -e "s/-/_/g")"
                     shift
@@ -2562,8 +2530,8 @@ data:
         fi
         cat >> "$service_file" <<EOF
     # Optimizations
-    TimeoutStartSec=2min
-    TimeoutStopSec=30s
+    TimeoutStartSec=${timeout_start_sec}
+    TimeoutStopSec=${timeout_stop_sec}
     IgnoreSIGPIPE=no
     KillMode=mixed
     EOF
@@ -2860,21 +2828,11 @@ data:
                     return 1
                     ;;
                 *)
-                    break
+                    string="$1"
                     ;;
             esac
             shift
         done
-
-        if [ "$#" -gt 1 ]; then
-            stderr_print "too many arguments provided"
-            return 2
-        elif [ "$#" -eq 0 ]; then
-            stderr_print "missing string"
-            return 1
-        else
-            string=$1
-        fi
 
         if [[ "$min_length" -ge 0 ]] && [[ "${#string}" -lt "$min_length" ]]; then
             echo "string length is less than $min_length"
@@ -3024,7 +2982,7 @@ data:
         if [[ -z "$(web_server_type)" || ! " ${supported_web_servers[*]} " == *" $(web_server_type) "* ]]; then
             print_validation_error "Could not detect any supported web servers. It must be one of: ${supported_web_servers[*]}"
         elif ! web_server_execute "$(web_server_type)" type -t "is_$(web_server_type)_running" >/dev/null; then
-            print_validation_error "Could not load the $(web_server_type) web server library from /opt/bitnami/scripts. Check that it exists and is readable."
+            print_validation_error "Could not load the $(web_server_type) web server library from /etc/redis_scripts/scripts. Check that it exists and is readable."
         fi
 
         return "$error_code"
@@ -3057,7 +3015,7 @@ data:
         if [[ "${BITNAMI_SERVICE_MANAGER:-}" = "systemd" ]]; then
             systemctl start "bitnami.$(web_server_type).service"
         else
-            "${BITNAMI_ROOT_DIR}/scripts/$(web_server_type)/start.sh"
+            "${ROOT_DIR}/scripts/$(web_server_type)/start.sh"
         fi
     }
 
@@ -3075,42 +3033,7 @@ data:
         if [[ "${BITNAMI_SERVICE_MANAGER:-}" = "systemd" ]]; then
             systemctl stop "bitnami.$(web_server_type).service"
         else
-            "${BITNAMI_ROOT_DIR}/scripts/$(web_server_type)/stop.sh"
-        fi
-    }
-
-    ########################
-    # Restart web server
-    # Globals:
-    #   *
-    # Arguments:
-    #   None
-    # Returns:
-    #   None
-    #########################
-    web_server_restart() {
-        info "Restarting $(web_server_type)"
-        if [[ "${BITNAMI_SERVICE_MANAGER:-}" = "systemd" ]]; then
-            systemctl restart "bitnami.$(web_server_type).service"
-        else
-            "${BITNAMI_ROOT_DIR}/scripts/$(web_server_type)/restart.sh"
-        fi
-    }
-
-    ########################
-    # Reload web server
-    # Globals:
-    #   *
-    # Arguments:
-    #   None
-    # Returns:
-    #   None
-    #########################
-    web_server_reload() {
-        if [[ "${BITNAMI_SERVICE_MANAGER:-}" = "systemd" ]]; then
-            systemctl reload "bitnami.$(web_server_type).service"
-        else
-            "${BITNAMI_ROOT_DIR}/scripts/$(web_server_type)/reload.sh"
+            "${ROOT_DIR}/scripts/$(web_server_type)/stop.sh" # TODO проверить путь скриптов
         fi
     }
 
@@ -3369,51 +3292,6 @@ data:
             web_server_execute "$web_server" "${web_server}_update_app_configuration" "${args[@]}"
         done
     }
-
-    ########################
-    # Enable loading page, which shows users that the initialization process is not yet completed
-    # Globals:
-    #   *
-    # Arguments:
-    #   None
-    # Returns:
-    #   None
-    #########################
-    web_server_enable_loading_page() {
-        ensure_web_server_app_configuration_exists "__loading" --hosts "_default_" \
-            --apache-additional-configuration "
-    # Show a HTTP 503 Service Unavailable page by default
-    RedirectMatch 503 ^/$
-    # Show index.html if server is answering with 404 Not Found or 503 Service Unavailable status codes
-    ErrorDocument 404 /index.html
-    ErrorDocument 503 /index.html" \
-            --nginx-additional-configuration "
-    # Show a HTTP 503 Service Unavailable page by default
-    location / {
-      return 503;
-    }
-    # Show index.html if server is answering with 404 Not Found or 503 Service Unavailable status codes
-    error_page 404 @installing;
-    error_page 503 @installing;
-    location @installing {
-      rewrite ^(.*)$ /index.html break;
-    }"
-        web_server_reload
-    }
-
-    ########################
-    # Enable loading page, which shows users that the initialization process is not yet completed
-    # Globals:
-    #   *
-    # Arguments:
-    #   None
-    # Returns:
-    #   None
-    #########################
-    web_server_disable_install_page() {
-        ensure_web_server_app_configuration_not_exists "__loading"
-        web_server_reload
-    }
   redis-env.sh: |
     #!/bin/bash
     # Copyright Broadcom, Inc. All Rights Reserved.
@@ -3423,7 +3301,7 @@ data:
 
     # The values for all environment variables will be set in the below order of precedence
     # 1. Custom environment variables defined below after Bitnami defaults
-    # 2. Constants defined in this file (environment variables with no default), i.e. BITNAMI_ROOT_DIR
+    # 2. Constants defined in this file (environment variables with no default), i.e. ROOT_DIR
     # 3. Environment variables overridden via external files using *_FILE variables (see below)
     # 4. Environment variables set externally (i.e. current Bash context/Dockerfile/userdata)
 
@@ -3431,8 +3309,7 @@ data:
     # shellcheck disable=SC1090,SC1091
     . /etc/redis_scripts/liblog.sh
 
-    export BITNAMI_ROOT_DIR="/opt/bitnami"
-    export BITNAMI_VOLUME_DIR="/bitnami"
+    export ROOT_DIR="/etc"
 
     # Logging configuration
     export MODULE="${MODULE:-redis}"
@@ -3490,20 +3367,18 @@ data:
     unset redis_env_vars
 
     # Paths
-    export REDIS_VOLUME_DIR="/bitnami/redis"
-    export REDIS_BASE_DIR="${BITNAMI_ROOT_DIR}/redis"
-    export REDIS_CONF_DIR="${REDIS_BASE_DIR}/etc"
+    export REDIS_BASE_DIR="${ROOT_DIR}/redis"
+    export REDIS_CONF_DIR="${REDIS_BASE_DIR}"
     export REDIS_DEFAULT_CONF_DIR="${REDIS_BASE_DIR}/etc.default"
     export REDIS_DATA_DIR="${REDIS_DATA_DIR:-${REDIS_VOLUME_DIR}/data}"
-    export REDIS_MOUNTED_CONF_DIR="${REDIS_BASE_DIR}/mounted-etc"
+    export REDIS_MOUNTED_CONF_DIR="${ROOT_DIR}/redis/mounted" # /etc/redis/mounted
     export REDIS_OVERRIDES_FILE="${REDIS_OVERRIDES_FILE:-${REDIS_MOUNTED_CONF_DIR}/overrides.conf}"
     export REDIS_CONF_FILE="${REDIS_CONF_DIR}/redis.conf"
     export REDIS_LOG_DIR="${REDIS_BASE_DIR}/logs"
     export REDIS_LOG_FILE="${REDIS_LOG_DIR}/redis.log"
     export REDIS_TMP_DIR="${REDIS_BASE_DIR}/tmp"
     export REDIS_PID_FILE="${REDIS_TMP_DIR}/redis.pid"
-    export REDIS_BIN_DIR="${REDIS_BASE_DIR}/bin"
-    export PATH="${REDIS_BIN_DIR}:${BITNAMI_ROOT_DIR}/common/bin:${PATH}"
+    export REDIS_BIN_DIR="/usr/local/bin"
 
     # System users (when running with a privileged user)
     export REDIS_DAEMON_USER="redis"
@@ -3549,4 +3424,5 @@ data:
     export REDIS_SENTINEL_PORT_NUMBER="${REDIS_SENTINEL_PORT_NUMBER:-26379}"
 
     # Custom environment variables may be defined below
+
 {{ end }}

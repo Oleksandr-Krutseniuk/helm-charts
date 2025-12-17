@@ -748,6 +748,18 @@ data:
     ARGS+=({{ . | quote }})
     {{- end }}
     {{- end }}
+    {{ if not .Values.image.bitnami }}
+    modules_dir="/usr/local/lib/redis/modules"
+    if [[ -d "$modules_dir" ]]; then
+    for module in "$modules_dir"/*.so; do
+        [[ -d "$module" ]] && { echo "Skipping module $module: is a directory."; continue; }
+        [[ -s "$module" ]] || { echo "Skipping $module: module has no size"; continue; }
+        [[ -r "$module" ]] || { echo "Skipping $module: not readable"; continue; }
+        [[ -x "$module" ]] || { echo "Warning: Skipping $module: not executable"; }
+        ARGS+=("--loadmodule" "$module")
+    done
+    fi
+    {{- end }}
     {{- if .Values.master.preExecCmds }}
     {{ .Values.master.preExecCmds | nindent 4 }}
     {{- end }}

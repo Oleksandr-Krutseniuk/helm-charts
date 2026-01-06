@@ -1,0 +1,86 @@
+---
+# Source: cron-hpa/templates/cronjob.yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: my-hpa-01-down
+spec:
+  schedule: 
+  concurrencyPolicy: "Replace"
+  startingDeadlineSeconds: 200
+  suspend: false
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: cron-hpa
+          containers:
+            - name: cron-hpa
+              image: "registry.k8s.io/kubectl:v1.33.0"
+              imagePullPolicy: IfNotPresent
+              automountServiceAccountToken: false
+              command:
+                - /bin/sh
+                - -c
+                - kubectl patch hpa my-hpa-01 -p '{"spec":{"minReplicas":1, "maxReplicas":2}}'
+          restartPolicy: OnFailure
+---
+# Source: cron-hpa/templates/cronjob.yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: my-hpa-01-up
+spec:
+  schedule: 
+  concurrencyPolicy: "Replace"
+  startingDeadlineSeconds: 200
+  suspend: false
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: cron-hpa
+          containers:
+            - name: cron-hpa
+              image: "registry.k8s.io/kubectl:v1.33.0"
+              imagePullPolicy: IfNotPresent
+              automountServiceAccountToken: false
+              command:
+                - /bin/sh
+                - -c
+                - kubectl patch hpa my-hpa-01 -p '{"spec":{"minReplicas":10, "maxReplicas":20}}'
+          restartPolicy: OnFailure
+---
+# Source: cron-hpa/templates/role.yaml
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: cron-hpa
+rules:
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers", "horizontalpodautoscalers/status"]
+    verbs: ["get", "patch", "list", "watch", "update"]
+---
+# Source: cron-hpa/templates/rolebinding.yaml
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: cron-hpa
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: cron-hpa
+subjects:
+  - kind: ServiceAccount
+    name: cron-hpa
+    namespace: test-namespace
+---
+# Source: cron-hpa/templates/serviceaccount.yaml
+kind: ServiceAccount
+apiVersion: v1
+metadata:
+  name: cron-hpa

@@ -1,0 +1,16 @@
+image:
+  repository: registry.k8s.io/kubectl
+  tag: 'v1.33.0'
+  pullPolicy: IfNotPresent
+
+managedHPA:
+  my-hpa-01-up:
+    name: my-hpa-01
+    cronSchedule: '1 9 * * *'
+    minReplicas: '10'
+    maxReplicas: '20'
+  my-hpa-01-down:
+    name: my-hpa-01
+    cronSchedule: '1 18 * * *'
+    minReplicas: '1'
+    maxReplicas: '2'

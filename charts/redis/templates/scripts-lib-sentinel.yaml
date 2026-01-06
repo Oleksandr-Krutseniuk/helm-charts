@@ -1,10 +1,9 @@
-{{- if and (not .Values.image.bitnami) (eq .Values.architecture "replication") .Values.sentinel.enabled }}
-
+{{- if and .Values.sentinel.enabled (not .Values.image.bitnami) }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ printf "%s-lib-sentinel-scripts" (include "common.names.fullname" .) }}
-  namespace: {{ .Release.Namespace | quote }}
+  namespace: {{ include "common.names.namespace" . | quote }}
   labels: {{- include "common.labels.standard" ( dict "customLabels" .Values.commonLabels "context" $ ) | nindent 4 }}
   {{- if .Values.commonAnnotations }}
   annotations: {{- include "common.tplvalues.render" ( dict "value" .Values.commonAnnotations "context" $ ) | nindent 4 }}
@@ -27,10 +26,7 @@ data:
 
     # Load libraries
     . /etc/redis_scripts/libredissentinel.sh
-    . /etc/redis_scripts/libbitnami.sh
     . /etc/redis_scripts/liblog.sh
-
-    print_welcome_page
 
     if [[ "$*" == *"/etc/redis_scripts/redis-sentinel/run.sh"* ]]; then
         info "** Starting Redis sentinel setup **"
@@ -132,60 +128,6 @@ data:
 
     # Initialize redis sentinel
     redis_initialize
-  libbitnami.sh: |
-    #!/bin/bash
-    # Copyright Broadcom, Inc. All Rights Reserved.
-    # SPDX-License-Identifier: APACHE-2.0
-    #
-    # Bitnami custom library
-
-    # shellcheck disable=SC1091
-
-    # Load Generic Libraries
-    . /etc/redis_scripts/liblog.sh
-
-    # Constants
-    BOLD='\033[1m'
-
-    # Functions
-
-    ########################
-    # Print the welcome page
-    # Globals:
-    #   DISABLE_WELCOME_MESSAGE
-    #   BITNAMI_APP_NAME
-    # Arguments:
-    #   None
-    # Returns:
-    #   None
-    #########################
-    print_welcome_page() {
-        if [[ -z "${DISABLE_WELCOME_MESSAGE:-}" ]]; then
-            if [[ -n "$BITNAMI_APP_NAME" ]]; then
-                print_image_welcome_page
-            fi
-        fi
-    }
-
-    ########################
-    # Print the welcome page for a Bitnami Docker image
-    # Globals:
-    #   BITNAMI_APP_NAME
-    # Arguments:
-    #   None
-    # Returns:
-    #   None
-    #########################
-    print_image_welcome_page() {
-        local github_url="https://github.com/bitnami/containers"
-
-        info ""
-        info "${BOLD}Welcome to the Bitnami ${BITNAMI_APP_NAME} container${RESET}"
-        info "Subscribe to project updates by watching ${BOLD}${github_url}${RESET}"
-        info "Submit issues and feature requests at ${BOLD}${github_url}/issues${RESET}"
-        info "Upgrade to Tanzu Application Catalog for production environments to access custom-configured and pre-packaged software components. Gain enhanced features, including Software Bill of Materials (SBOM), CVE scan result reports, and VEX documents. To learn more, visit ${BOLD}https://bitnami.com/enterprise${RESET}"
-        info ""
-    }
   libfile.sh: |
     #!/bin/bash
     # Copyright Broadcom, Inc. All Rights Reserved.
@@ -618,7 +560,7 @@ data:
     ########################
     # Log a 'debug' message
     # Globals:
-    #   BITNAMI_DEBUG
+    #   DEBUG_MODE
     # Arguments:
     #   None
     # Returns:
@@ -626,7 +568,7 @@ data:
     #########################
     debug() {
         # 'is_boolean_yes' is defined in libvalidations.sh, but depends on this file so we cannot source it
-        local bool="${BITNAMI_DEBUG:-false}"
+        local bool="${DEBUG_MODE:-false}"
         # comparison is performed without regard to the case of alphabetic characters
         shopt -s nocasematch
         if [[ "$bool" = 1 || "$bool" =~ ^(yes|true)$ ]]; then
@@ -1168,14 +1110,14 @@ data:
     #########################
     # Redirects output to /dev/null if debug mode is disabled
     # Globals:
-    #   BITNAMI_DEBUG
+    #   DEBUG_MODE
     # Arguments:
     #   $@ - Command to execute
     # Returns:
     #   None
     #########################
     debug_execute() {
-        if is_boolean_yes "${BITNAMI_DEBUG:-false}"; then
+        if is_boolean_yes "${DEBUG_MODE:-false}"; then
             "$@"
         else
             "$@" >/dev/null 2>&1
@@ -1486,137 +1428,12 @@ data:
             chroot --userspec="$userspec" / bash -c "cd ${cwd}; export HOME=${homedir}; exec \"\$@\"" -- "$@"
         fi
     }
-  libpersistence.sh: |
-    #!/bin/bash
-    # Copyright Broadcom, Inc. All Rights Reserved.
-    # SPDX-License-Identifier: APACHE-2.0
-    #
-    # Bitnami persistence library
-    # Used for bringing persistence capabilities to applications that don't have clear separation of data and logic
-
-    # shellcheck disable=SC1091
-
-    # Load Generic Libraries
-    . /etc/redis_scripts/libfs.sh
-    . /etc/redis_scripts/libos.sh
-    . /etc/redis_scripts/liblog.sh
-    . /etc/redis_scripts/libversion.sh
-
-    # Functions
-
-    ########################
-    # Persist an application directory
-    # Globals:
-    #   BITNAMI_ROOT_DIR
-    #   BITNAMI_VOLUME_DIR
-    # Arguments:
-    #   $1 - App folder name
-    #   $2 - List of app files to persist
-    # Returns:
-    #   true if all steps succeeded, false otherwise
-    #########################
-    persist_app() {
-        local -r app="${1:?missing app}"
-        local -a files_to_restore
-        read -r -a files_to_persist <<< "$(tr ',;:' ' ' <<< "$2")"
-        local -r install_dir="${BITNAMI_ROOT_DIR}/${app}"
-        local -r persist_dir="${BITNAMI_VOLUME_DIR}/${app}"
-        # Persist the individual files
-        if [[ "${#files_to_persist[@]}" -le 0 ]]; then
-            warn "No files are configured to be persisted"
-            return
-        fi
-        pushd "$install_dir" >/dev/null || exit
-        local file_to_persist_relative file_to_persist_destination file_to_persist_destination_folder
-        local -r tmp_file="/tmp/perms.acl"
-        for file_to_persist in "${files_to_persist[@]}"; do
-            if [[ ! -f "$file_to_persist" && ! -d "$file_to_persist" ]]; then
-                error "Cannot persist '${file_to_persist}' because it does not exist"
-                return 1
-            fi
-            file_to_persist_relative="$(relativize "$file_to_persist" "$install_dir")"
-            file_to_persist_destination="${persist_dir}/${file_to_persist_relative}"
-            file_to_persist_destination_folder="$(dirname "$file_to_persist_destination")"
-            # Get original permissions for existing files, which will be applied later
-            # Exclude the root directory with 'sed', to avoid issues when copying the entirety of it to a volume
-            getfacl -R "$file_to_persist_relative" | sed -E '/# file: (\..+|[^.])/,$!d' > "$tmp_file"
-            # Copy directories to the volume
-            ensure_dir_exists "$file_to_persist_destination_folder"
-            cp -Lr --preserve=links "$file_to_persist_relative" "$file_to_persist_destination_folder"
-            # Restore permissions
-            pushd "$persist_dir" >/dev/null || exit
-            if am_i_root; then
-                setfacl --restore="$tmp_file"
-            else
-                # When running as non-root, don't change ownership
-                setfacl --restore=<(grep -E -v '^# (owner|group):' "$tmp_file")
-            fi
-            popd >/dev/null || exit
-        done
-        popd >/dev/null || exit
-        rm -f "$tmp_file"
-        # Install the persisted files into the installation directory, via symlinks
-        restore_persisted_app "$@"
-    }
-
-    ########################
-    # Restore a persisted application directory
-    # Globals:
-    #   BITNAMI_ROOT_DIR
-    #   BITNAMI_VOLUME_DIR
-    #   FORCE_MAJOR_UPGRADE
-    # Arguments:
-    #   $1 - App folder name
-    #   $2 - List of app files to restore
-    # Returns:
-    #   true if all steps succeeded, false otherwise
-    #########################
-    restore_persisted_app() {
-        local -r app="${1:?missing app}"
-        local -a files_to_restore
-        read -r -a files_to_restore <<< "$(tr ',;:' ' ' <<< "$2")"
-        local -r install_dir="${BITNAMI_ROOT_DIR}/${app}"
-        local -r persist_dir="${BITNAMI_VOLUME_DIR}/${app}"
-        # Restore the individual persisted files
-        if [[ "${#files_to_restore[@]}" -le 0 ]]; then
-            warn "No persisted files are configured to be restored"
-            return
-        fi
-        local file_to_restore_relative file_to_restore_origin file_to_restore_destination
-        for file_to_restore in "${files_to_restore[@]}"; do
-            file_to_restore_relative="$(relativize "$file_to_restore" "$install_dir")"
-            # We use 'realpath --no-symlinks' to ensure that the case of '.' is covered and the directory is removed
-            file_to_restore_origin="$(realpath --no-symlinks "${install_dir}/${file_to_restore_relative}")"
-            file_to_restore_destination="$(realpath --no-symlinks "${persist_dir}/${file_to_restore_relative}")"
-            rm -rf "$file_to_restore_origin"
-            ln -sfn "$file_to_restore_destination" "$file_to_restore_origin"
-        done
-    }
-
-    ########################
-    # Check if an application directory was already persisted
-    # Globals:
-    #   BITNAMI_VOLUME_DIR
-    # Arguments:
-    #   $1 - App folder name
-    # Returns:
-    #   true if all steps succeeded, false otherwise
-    #########################
-    is_app_initialized() {
-        local -r app="${1:?missing app}"
-        local -r persist_dir="${BITNAMI_VOLUME_DIR}/${app}"
-        if ! is_mounted_dir_empty "$persist_dir"; then
-            true
-        else
-            false
-        fi
-    }
   libredissentinel.sh: |
     #!/bin/bash
     # Copyright Broadcom, Inc. All Rights Reserved.
     # SPDX-License-Identifier: APACHE-2.0
     #
-    # Bitnami Redis Sentinel library
+    # Redis Sentinel library
 
     # shellcheck disable=SC1091
 
@@ -2190,7 +2007,7 @@ data:
     generate_systemd_conf() {
         local -r service_name="${1:?service name is missing}"
         local -r systemd_units_dir="/etc/systemd/system"
-        local -r service_file="${systemd_units_dir}/bitnami.${service_name}.service"
+        local -r service_file="${systemd_units_dir}/${service_name}.service"
         # Default values
         local name="$service_name"
         local type="forking"
@@ -2284,9 +2101,9 @@ data:
     # SPDX-License-Identifier: APACHE-2.0
 
     [Unit]
-    Description=Bitnami service for ${name}
-    # Starting/stopping the main bitnami service should cause the same effect for this service
-    PartOf=bitnami.service
+    Description=Service for ${name}
+    # Starting/stopping the main service should cause the same effect for this service
+    PartOf=sentinel.service
 
     [Service]
     Type=${type}
@@ -2368,8 +2185,8 @@ data:
         cat >> "$service_file" <<EOF
 
     [Install]
-    # Enabling/disabling the main bitnami service should cause the same effect for this service
-    WantedBy=bitnami.service
+    # Enabling/disabling the main service should cause the same effect for this service
+    WantedBy=sentinel.service
     EOF
     }
   libvalidations.sh: |
@@ -2729,483 +2546,6 @@ data:
             fi
         fi
     }
-  libwebserver.sh: |
-    #!/bin/bash
-    # Copyright Broadcom, Inc. All Rights Reserved.
-    # SPDX-License-Identifier: APACHE-2.0
-    #
-    # Bitnami web server handler library
-
-    # shellcheck disable=SC1090,SC1091
-
-    # Load generic libraries
-    . /etc/redis_scripts/liblog.sh
-
-    ########################
-    # Execute a command (or list of commands) with the web server environment and library loaded
-    # Globals:
-    #   *
-    # Arguments:
-    #   None
-    # Returns:
-    #   None
-    #########################
-    web_server_execute() {
-        local -r web_server="${1:?missing web server}"
-        shift
-        # Run program in sub-shell to avoid web server environment getting loaded when not necessary
-        (
-            . "/etc/redis_scripts/lib${web_server}.sh"
-            . "/etc/redis_scripts/${web_server}-env.sh"
-            "$@"
-        )
-    }
-
-    ########################
-    # Prints the list of enabled web servers
-    # Globals:
-    #   None
-    # Arguments:
-    #   None
-    # Returns:
-    #   None
-    #########################
-    web_server_list() {
-        local -r -a supported_web_servers=(apache nginx)
-        local -a existing_web_servers=()
-        for web_server in "${supported_web_servers[@]}"; do
-            [[ -f "/etc/redis_scripts/${web_server}-env.sh" ]] && existing_web_servers+=("$web_server")
-        done
-        echo "${existing_web_servers[@]:-}"
-    }
-
-    ########################
-    # Prints the currently-enabled web server type (only one, in order of preference)
-    # Globals:
-    #   None
-    # Arguments:
-    #   None
-    # Returns:
-    #   None
-    #########################
-    web_server_type() {
-        local -a web_servers
-        read -r -a web_servers <<< "$(web_server_list)"
-        echo "${web_servers[0]:-}"
-    }
-
-    ########################
-    # Validate that a supported web server is configured
-    # Globals:
-    #   None
-    # Arguments:
-    #   None
-    # Returns:
-    #   None
-    #########################
-    web_server_validate() {
-        local error_code=0
-        local supported_web_servers=("apache" "nginx")
-
-        # Auxiliary functions
-        print_validation_error() {
-            error "$1"
-            error_code=1
-        }
-
-        if [[ -z "$(web_server_type)" || ! " ${supported_web_servers[*]} " == *" $(web_server_type) "* ]]; then
-            print_validation_error "Could not detect any supported web servers. It must be one of: ${supported_web_servers[*]}"
-        elif ! web_server_execute "$(web_server_type)" type -t "is_$(web_server_type)_running" >/dev/null; then
-            print_validation_error "Could not load the $(web_server_type) web server library from /opt/bitnami/scripts. Check that it exists and is readable."
-        fi
-
-        return "$error_code"
-    }
-
-    ########################
-    # Check whether the web server is running
-    # Globals:
-    #   *
-    # Arguments:
-    #   None
-    # Returns:
-    #   true if the web server is running, false otherwise
-    #########################
-    is_web_server_running() {
-        "is_$(web_server_type)_running"
-    }
-
-    ########################
-    # Start web server
-    # Globals:
-    #   *
-    # Arguments:
-    #   None
-    # Returns:
-    #   None
-    #########################
-    web_server_start() {
-        info "Starting $(web_server_type) in background"
-        if [[ "${BITNAMI_SERVICE_MANAGER:-}" = "systemd" ]]; then
-            systemctl start "bitnami.$(web_server_type).service"
-        else
-            "${BITNAMI_ROOT_DIR}/scripts/$(web_server_type)/start.sh"
-        fi
-    }
-
-    ########################
-    # Stop web server
-    # Globals:
-    #   *
-    # Arguments:
-    #   None
-    # Returns:
-    #   None
-    #########################
-    web_server_stop() {
-        info "Stopping $(web_server_type)"
-        if [[ "${BITNAMI_SERVICE_MANAGER:-}" = "systemd" ]]; then
-            systemctl stop "bitnami.$(web_server_type).service"
-        else
-            "${BITNAMI_ROOT_DIR}/scripts/$(web_server_type)/stop.sh"
-        fi
-    }
-
-    ########################
-    # Restart web server
-    # Globals:
-    #   *
-    # Arguments:
-    #   None
-    # Returns:
-    #   None
-    #########################
-    web_server_restart() {
-        info "Restarting $(web_server_type)"
-        if [[ "${BITNAMI_SERVICE_MANAGER:-}" = "systemd" ]]; then
-            systemctl restart "bitnami.$(web_server_type).service"
-        else
-            "${BITNAMI_ROOT_DIR}/scripts/$(web_server_type)/restart.sh"
-        fi
-    }
-
-    ########################
-    # Reload web server
-    # Globals:
-    #   *
-    # Arguments:
-    #   None
-    # Returns:
-    #   None
-    #########################
-    web_server_reload() {
-        if [[ "${BITNAMI_SERVICE_MANAGER:-}" = "systemd" ]]; then
-            systemctl reload "bitnami.$(web_server_type).service"
-        else
-            "${BITNAMI_ROOT_DIR}/scripts/$(web_server_type)/reload.sh"
-        fi
-    }
-
-    ########################
-    # Ensure a web server application configuration exists (i.e. Apache virtual host format or NGINX server block)
-    # It serves as a wrapper for the specific web server function
-    # Globals:
-    #   *
-    # Arguments:
-    #   $1 - App name
-    # Flags:
-    #   --type - Application type, which has an effect on which configuration template to use
-    #   --hosts - Host listen addresses
-    #   --server-name - Server name
-    #   --server-aliases - Server aliases
-    #   --allow-remote-connections - Whether to allow remote connections or to require local connections
-    #   --disable - Whether to render server configurations with a .disabled prefix
-    #   --disable-http - Whether to render the app's HTTP server configuration with a .disabled prefix
-    #   --disable-https - Whether to render the app's HTTPS server configuration with a .disabled prefix
-    #   --http-port - HTTP port number
-    #   --https-port - HTTPS port number
-    #   --document-root - Path to document root directory
-    # Apache-specific flags:
-    #   --apache-additional-configuration - Additional vhost configuration (no default)
-    #   --apache-additional-http-configuration - Additional HTTP vhost configuration (no default)
-    #   --apache-additional-https-configuration - Additional HTTPS vhost configuration (no default)
-    #   --apache-before-vhost-configuration - Configuration to add before the <VirtualHost> directive (no default)
-    #   --apache-allow-override - Whether to allow .htaccess files (only allowed when --move-htaccess is set to 'no' and type is not defined)
-    #   --apache-extra-directory-configuration - Extra configuration for the document root directory
-    #   --apache-proxy-address - Address where to proxy requests
-    #   --apache-proxy-configuration - Extra configuration for the proxy
-    #   --apache-proxy-http-configuration - Extra configuration for the proxy HTTP vhost
-    #   --apache-proxy-https-configuration - Extra configuration for the proxy HTTPS vhost
-    #   --apache-move-htaccess - Move .htaccess files to a common place so they can be loaded during Apache startup (only allowed when type is not defined)
-    # NGINX-specific flags:
-    #   --nginx-additional-configuration - Additional server block configuration (no default)
-    #   --nginx-external-configuration - Configuration external to server block (no default)
-    # Returns:
-    #   true if the configuration was enabled, false otherwise
-    ########################
-    ensure_web_server_app_configuration_exists() {
-        local app="${1:?missing app}"
-        shift
-        local -a apache_args nginx_args web_servers args_var
-        apache_args=("$app")
-        nginx_args=("$app")
-        # Validate arguments
-        while [[ "$#" -gt 0 ]]; do
-            case "$1" in
-                # Common flags
-                --disable \
-                | --disable-http \
-                | --disable-https \
-                )
-                    apache_args+=("$1")
-                    nginx_args+=("$1")
-                    ;;
-                --hosts \
-                | --server-name \
-                | --server-aliases \
-                | --type \
-                | --allow-remote-connections \
-                | --http-port \
-                | --https-port \
-                | --document-root \
-                )
-                    apache_args+=("$1" "${2:?missing value}")
-                    nginx_args+=("$1" "${2:?missing value}")
-                    shift
-                    ;;
-
-                # Specific Apache flags
-                --apache-additional-configuration \
-                | --apache-additional-http-configuration \
-                | --apache-additional-https-configuration \
-                | --apache-before-vhost-configuration \
-                | --apache-allow-override \
-                | --apache-extra-directory-configuration \
-                | --apache-proxy-address \
-                | --apache-proxy-configuration \
-                | --apache-proxy-http-configuration \
-                | --apache-proxy-https-configuration \
-                | --apache-move-htaccess \
-                )
-                    apache_args+=("${1//apache-/}" "${2:?missing value}")
-                    shift
-                    ;;
-
-                # Specific NGINX flags
-                --nginx-additional-configuration \
-                | --nginx-external-configuration)
-                    nginx_args+=("${1//nginx-/}" "${2:?missing value}")
-                    shift
-                    ;;
-
-                *)
-                    echo "Invalid command line flag $1" >&2
-                    return 1
-                    ;;
-            esac
-            shift
-        done
-        read -r -a web_servers <<< "$(web_server_list)"
-        for web_server in "${web_servers[@]}"; do
-            args_var="${web_server}_args[@]"
-            web_server_execute "$web_server" "ensure_${web_server}_app_configuration_exists" "${!args_var}"
-        done
-    }
-
-    ########################
-    # Ensure a web server application configuration does not exist anymore (i.e. Apache virtual host format or NGINX server block)
-    # It serves as a wrapper for the specific web server function
-    # Globals:
-    #   *
-    # Arguments:
-    #   $1 - App name
-    # Returns:
-    #   true if the configuration was disabled, false otherwise
-    ########################
-    ensure_web_server_app_configuration_not_exists() {
-        local app="${1:?missing app}"
-        local -a web_servers
-        read -r -a web_servers <<< "$(web_server_list)"
-        for web_server in "${web_servers[@]}"; do
-            web_server_execute "$web_server" "ensure_${web_server}_app_configuration_not_exists" "$app"
-        done
-    }
-
-    ########################
-    # Ensure the web server loads the configuration for an application in a URL prefix
-    # It serves as a wrapper for the specific web server function
-    # Globals:
-    #   *
-    # Arguments:
-    #   $1 - App name
-    # Flags:
-    #   --allow-remote-connections - Whether to allow remote connections or to require local connections
-    #   --document-root - Path to document root directory
-    #   --prefix - URL prefix from where it will be accessible (i.e. /myapp)
-    #   --type - Application type, which has an effect on what configuration template will be used
-    # Apache-specific flags:
-    #   --apache-additional-configuration - Additional vhost configuration (no default)
-    #   --apache-allow-override - Whether to allow .htaccess files (only allowed when --move-htaccess is set to 'no')
-    #   --apache-extra-directory-configuration - Extra configuration for the document root directory
-    #   --apache-move-htaccess - Move .htaccess files to a common place so they can be loaded during Apache startup
-    # NGINX-specific flags:
-    #   --nginx-additional-configuration - Additional server block configuration (no default)
-    # Returns:
-    #   true if the configuration was enabled, false otherwise
-    ########################
-    ensure_web_server_prefix_configuration_exists() {
-        local app="${1:?missing app}"
-        shift
-        local -a apache_args nginx_args web_servers args_var
-        apache_args=("$app")
-        nginx_args=("$app")
-        # Validate arguments
-        while [[ "$#" -gt 0 ]]; do
-            case "$1" in
-                # Common flags
-                --allow-remote-connections \
-                | --document-root \
-                | --prefix \
-                | --type \
-                )
-                    apache_args+=("$1" "${2:?missing value}")
-                    nginx_args+=("$1" "${2:?missing value}")
-                    shift
-                    ;;
-
-                # Specific Apache flags
-                --apache-additional-configuration \
-                | --apache-allow-override \
-                | --apache-extra-directory-configuration \
-                | --apache-move-htaccess \
-                )
-                    apache_args+=("${1//apache-/}" "$2")
-                    shift
-                    ;;
-
-                # Specific NGINX flags
-                --nginx-additional-configuration)
-                    nginx_args+=("${1//nginx-/}" "$2")
-                    shift
-                    ;;
-
-                *)
-                    echo "Invalid command line flag $1" >&2
-                    return 1
-                    ;;
-            esac
-            shift
-        done
-        read -r -a web_servers <<< "$(web_server_list)"
-        for web_server in "${web_servers[@]}"; do
-            args_var="${web_server}_args[@]"
-            web_server_execute "$web_server" "ensure_${web_server}_prefix_configuration_exists" "${!args_var}"
-        done
-    }
-
-    ########################
-    # Ensure a web server application configuration is updated with the runtime configuration (i.e. ports)
-    # It serves as a wrapper for the specific web server function
-    # Globals:
-    #   *
-    # Arguments:
-    #   $1 - App name
-    # Flags:
-    #   --hosts - Host listen addresses
-    #   --server-name - Server name
-    #   --server-aliases - Server aliases
-    #   --enable-http - Enable HTTP app configuration (if not enabled already)
-    #   --enable-https - Enable HTTPS app configuration (if not enabled already)
-    #   --disable-http - Disable HTTP app configuration (if not disabled already)
-    #   --disable-https - Disable HTTPS app configuration (if not disabled already)
-    #   --http-port - HTTP port number
-    #   --https-port - HTTPS port number
-    # Returns:
-    #   true if the configuration was updated, false otherwise
-    ########################
-    web_server_update_app_configuration() {
-        local app="${1:?missing app}"
-        shift
-        local -a args web_servers
-        args=("$app")
-        # Validate arguments
-        while [[ "$#" -gt 0 ]]; do
-            case "$1" in
-                # Common flags
-                --enable-http \
-                | --enable-https \
-                | --disable-http \
-                | --disable-https \
-                )
-                    args+=("$1")
-                    ;;
-                --hosts \
-                | --server-name \
-                | --server-aliases \
-                | --http-port \
-                | --https-port \
-                )
-                    args+=("$1" "${2:?missing value}")
-                    shift
-                    ;;
-
-                *)
-                    echo "Invalid command line flag $1" >&2
-                    return 1
-                    ;;
-            esac
-            shift
-        done
-        read -r -a web_servers <<< "$(web_server_list)"
-        for web_server in "${web_servers[@]}"; do
-            web_server_execute "$web_server" "${web_server}_update_app_configuration" "${args[@]}"
-        done
-    }
-
-    ########################
-    # Enable loading page, which shows users that the initialization process is not yet completed
-    # Globals:
-    #   *
-    # Arguments:
-    #   None
-    # Returns:
-    #   None
-    #########################
-    web_server_enable_loading_page() {
-        ensure_web_server_app_configuration_exists "__loading" --hosts "_default_" \
-            --apache-additional-configuration "
-    # Show a HTTP 503 Service Unavailable page by default
-    RedirectMatch 503 ^/$
-    # Show index.html if server is answering with 404 Not Found or 503 Service Unavailable status codes
-    ErrorDocument 404 /index.html
-    ErrorDocument 503 /index.html" \
-            --nginx-additional-configuration "
-    # Show a HTTP 503 Service Unavailable page by default
-    location / {
-      return 503;
-    }
-    # Show index.html if server is answering with 404 Not Found or 503 Service Unavailable status codes
-    error_page 404 @installing;
-    error_page 503 @installing;
-    location @installing {
-      rewrite ^(.*)$ /index.html break;
-    }"
-        web_server_reload
-    }
-
-    ########################
-    # Enable loading page, which shows users that the initialization process is not yet completed
-    # Globals:
-    #   *
-    # Arguments:
-    #   None
-    # Returns:
-    #   None
-    #########################
-    web_server_disable_install_page() {
-        ensure_web_server_app_configuration_not_exists "__loading"
-        web_server_reload
-    }
   redis-sentinel-env.sh: |
     #!/bin/bash
     # Copyright Broadcom, Inc. All Rights Reserved.
@@ -3214,8 +2554,8 @@ data:
     # Environment configuration for redis-sentinel
 
     # The values for all environment variables will be set in the below order of precedence
-    # 1. Custom environment variables defined below after Bitnami defaults
-    # 2. Constants defined in this file (environment variables with no default), i.e. BITNAMI_ROOT_DIR
+    # 1. Custom environment variables defined below after defaults
+    # 2. Constants defined in this file (environment variables with no default), i.e. ROOT_DIR
     # 3. Environment variables overridden via external files using *_FILE variables (see below)
     # 4. Environment variables set externally (i.e. current Bash context/Dockerfile/userdata)
 
@@ -3223,12 +2563,10 @@ data:
     # shellcheck disable=SC1090,SC1091
     . /etc/redis_scripts/liblog.sh
 
-    export BITNAMI_ROOT_DIR="/opt/bitnami"
-    export BITNAMI_VOLUME_DIR="/bitnami"
+    export ROOT_DIR="/etc"
 
     # Logging configuration
     export MODULE="${MODULE:-redis-sentinel}"
-    export BITNAMI_DEBUG="${BITNAMI_DEBUG:-false}"
 
     # By setting an environment variable matching *_FILE to a file path, the prefixed environment
     # variable will be overridden with the value specified in that file
@@ -3277,18 +2615,17 @@ data:
     unset redis_sentinel_env_vars
 
     # Paths
-    export REDIS_SENTINEL_VOLUME_DIR="/bitnami/redis-sentinel"
-    export REDIS_SENTINEL_BASE_DIR="${BITNAMI_ROOT_DIR}/redis-sentinel"
-    export REDIS_SENTINEL_CONF_DIR="${REDIS_SENTINEL_BASE_DIR}/etc"
-    export REDIS_SENTINEL_DEFAULT_CONF_DIR="${REDIS_SENTINEL_BASE_DIR}/etc.default"
-    export REDIS_SENTINEL_DATA_DIR="${REDIS_SENTINEL_DATA_DIR:-${REDIS_SENTINEL_VOLUME_DIR}/data}"
-    export REDIS_SENTINEL_MOUNTED_CONF_DIR="${REDIS_SENTINEL_BASE_DIR}/mounted-etc"
+    export REDIS_SENTINEL_BASE_DIR="${ROOT_DIR}/redis-sentinel" # /etc/redis-sentinel
+    export REDIS_SENTINEL_VOLUME_DIR="/data"
+    export REDIS_SENTINEL_DATA_DIR="${REDIS_SENTINEL_DATA_DIR:-${REDIS_SENTINEL_VOLUME_DIR}"
+    export REDIS_SENTINEL_MOUNTED_CONF_DIR="${ROOT_DIR}/mounted/redis-sentinel"
+    export REDIS_SENTINEL_CONF_DIR="${REDIS_SENTINEL_BASE_DIR}"
     export REDIS_SENTINEL_CONF_FILE="${REDIS_SENTINEL_CONF_DIR}/sentinel.conf"
+    export REDIS_SENTINEL_DEFAULT_CONF_DIR="${REDIS_SENTINEL_BASE_DIR}/etc.default"
     export REDIS_SENTINEL_LOG_DIR="${REDIS_SENTINEL_BASE_DIR}/logs"
     export REDIS_SENTINEL_TMP_DIR="${REDIS_SENTINEL_BASE_DIR}/tmp"
     export REDIS_SENTINEL_PID_FILE="${REDIS_SENTINEL_TMP_DIR}/redis-sentinel.pid"
-    export REDIS_SENTINEL_BIN_DIR="${REDIS_SENTINEL_BASE_DIR}/bin"
-    export PATH="${REDIS_SENTINEL_BIN_DIR}:${BITNAMI_ROOT_DIR}/common/bin:${PATH}"
+    export REDIS_SENTINEL_BIN_DIR="/usr/local/bin"
 
     # System users (when running with a privileged user)
     export REDIS_SENTINEL_DAEMON_USER="redis"

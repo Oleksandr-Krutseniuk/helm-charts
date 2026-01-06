@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ printf "%s-scripts" (include "common.names.fullname" .) }}
-  namespace: {{ .Release.Namespace | quote }}
+  namespace: {{ include "common.names.namespace" . | quote }}
   labels: {{- include "common.labels.standard" ( dict "customLabels" .Values.commonLabels "context" $ ) | nindent 4 }}
   {{- if .Values.commonAnnotations }}
   annotations: {{- include "common.tplvalues.render" ( dict "value" .Values.commonAnnotations "context" $ ) | nindent 4 }}
@@ -11,8 +11,7 @@ data:
 {{- if and (eq .Values.architecture "replication") .Values.sentinel.enabled }}
   start-node.sh: |
     #!/bin/bash
-
-    {{ if .Values.image.bitnami -}}
+    {{ if .Values.image.bitnami }}
     . /opt/bitnami/scripts/libos.sh
     . /opt/bitnami/scripts/liblog.sh
     . /opt/bitnami/scripts/libvalidations.sh
@@ -267,6 +266,19 @@ data:
     {{- .Values.replica.preExecCmds | nindent 4 }}
     {{- end }}
 
+    {{- if not .Values.image.bitnami }}
+    modules_dir="/usr/local/lib/redis/modules"
+    if [[ -d "$modules_dir" ]]; then
+    for module in "$modules_dir"/*.so; do
+        [[ -d "$module" ]] && { echo "Skipping module $module: is a directory."; continue; }
+        [[ -s "$module" ]] || { echo "Skipping $module: module has no size"; continue; }
+        [[ -r "$module" ]] || { echo "Skipping $module: not readable"; continue; }
+        [[ -x "$module" ]] || { echo "Warning: Skipping $module: not executable"; }
+        ARGS+=("--loadmodule" "$module")
+    done
+    fi
+    {{- end }}
+
     {{- if .Values.replica.command }}
     exec {{ .Values.replica.command }} "${ARGS[@]}"
     {{- else }}
@@ -349,9 +361,9 @@ data:
         value="${value//&/\\&}"
         value="${value//\?/\\?}"
         [[ "$value" = "" ]] && value="\"$value\""
-        {{- if .Values.image.bitnami }}
+        {{ if .Values.image.bitnami }}
         replace_in_file "/opt/bitnami/redis-sentinel/etc/sentinel.conf" "^#*\s*${key} .*" "${key} ${value}" false
-        {{ else }}
+        {{- else }}
         replace_in_file "/etc/redis-sentinel/sentinel.conf" "^#*\s*${key} .*" "${key} ${value}" false
         {{- end }}
     }
@@ -363,7 +375,11 @@ data:
         {{- end }}
     }
     host_id() {
+        {{- if .Values.image.bitnami }}
         echo "$1" | openssl sha1 | awk '{print $2}'
+        {{- else }}
+        printf '%s\n' "$1" | sha1sum | awk '{print $1}'
+        {{- end }}
     }
     get_sentinel_master_info() {
         if is_boolean_yes "$REDIS_SENTINEL_TLS_ENABLED"; then
@@ -429,8 +445,7 @@ data:
     {{ else }}
     cp /etc/mounted/redis-sentinel/sentinel.conf /etc/redis-sentinel/sentinel.conf
     {{ end -}}
-
-    {{ if .Values.image.bitnami }}
+    {{- if .Values.image.bitnami }}
     {{- if .Values.auth.enabled }}
     printf "\nsentinel auth-pass %s %s" "{{ .Values.sentinel.masterSet }}" "$REDIS_PASSWORD" >> /opt/bitnami/redis-sentinel/etc/sentinel.conf
     {{- if and .Values.auth.enabled .Values.auth.sentinel }}
@@ -481,7 +496,6 @@ data:
         add_known_sentinel "$hostname" "$ip"
         add_known_replica "$hostname" "$ip"
     done
-
     {{ if .Values.image.bitnami }}
     echo "" >> /opt/bitnami/redis-sentinel/etc/sentinel.conf
     {{- if not (contains "sentinel announce-hostnames" .Values.sentinel.configuration) }}
@@ -530,9 +544,9 @@ data:
 
     {{- if .Values.image.bitnami }}
     exec redis-server /opt/bitnami/redis-sentinel/etc/sentinel.conf {{- if .Values.tls.enabled }} "${ARGS[@]}" {{- end }} --sentinel
-    {{ else }}
+    {{- else }}
     exec redis-server /etc/redis-sentinel/sentinel.conf {{- if .Values.tls.enabled }} "${ARGS[@]}" {{- end }} --sentinel
-    {{ end }}
+    {{- end }}
   prestop-sentinel.sh: |
     #!/bin/bash
     {{ if .Values.image.bitnami }}
@@ -542,7 +556,6 @@ data:
     . /etc/redis_scripts/libvalidations.sh
     . /etc/redis_scripts/libos.sh
     {{- end }}
-
     HEADLESS_SERVICE="{{ template "common.names.fullname" . }}-headless.{{ .Release.Namespace }}.svc.{{ .Values.clusterDomain }}"
 
     get_full_hostname() {
@@ -614,7 +627,6 @@ data:
     . /etc/redis_scripts/libvalidations.sh
     . /etc/redis_scripts/libos.sh
     {{- end }}
-
     run_redis_command() {
         if is_boolean_yes "$REDIS_TLS_ENABLED"; then
             redis-cli -h 127.0.0.1 -p "$REDIS_TLS_PORT" --tls --cert "$REDIS_TLS_CERT_FILE" --key "$REDIS_TLS_KEY_FILE" --cacert "$REDIS_TLS_CA_FILE" "$@"
@@ -883,6 +895,18 @@ data:
     {{- range .Values.replica.extraFlags }}
     ARGS+=({{ . | quote }})
     {{- end }}
+    {{- end }}
+    {{ if not .Values.image.bitnami }}
+    modules_dir="/usr/local/lib/redis/modules"
+    if [[ -d "$modules_dir" ]]; then
+    for module in "$modules_dir"/*.so; do
+        [[ -d "$module" ]] && { echo "Skipping module $module: is a directory."; continue; }
+        [[ -s "$module" ]] || { echo "Skipping $module: module has no size"; continue; }
+        [[ -r "$module" ]] || { echo "Skipping $module: not readable"; continue; }
+        [[ -x "$module" ]] || { echo "Warning: Skipping $module: not executable"; }
+        ARGS+=("--loadmodule" "$module")
+    done
+    fi
     {{- end }}
     {{- if .Values.replica.preExecCmds }}
     {{ .Values.replica.preExecCmds | nindent 4 }}

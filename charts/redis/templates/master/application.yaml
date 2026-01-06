@@ -1,9 +1,10 @@
-{{- if or (not (eq .Values.architecture "replication")) (not .Values.sentinel.enabled) }}
+{{- if gt (int64 .Values.master.count) 0 -}}
+{{- if or (ne .Values.architecture "replication") (not .Values.sentinel.enabled) }}
 apiVersion: {{ include "common.capabilities.statefulset.apiVersion" . }}
 kind: {{ .Values.master.kind }}
 metadata:
   name: {{ printf "%s-master" (include "common.names.fullname" .) }}
-  namespace: {{ .Release.Namespace | quote }}
+  namespace: {{ include "common.names.namespace" . | quote }}
   labels: {{- include "common.labels.standard" ( dict "customLabels" .Values.commonLabels "context" $ ) | nindent 4 }}
     app.kubernetes.io/component: master
   {{- if .Values.commonAnnotations }}
@@ -238,11 +239,10 @@ spec:
             {{ else }}
             - name: redis-scripts
               mountPath: /etc/redis_scripts
-              readOnly: true
             {{ end -}}
             - name: health
               mountPath: /health
-            {{- if .Values.auth.usePasswordFiles }}
+            {{- if and .Values.auth.enabled .Values.auth.usePasswordFiles }}
             {{- if .Values.image.bitnami }}
             - name: redis-password
               mountPath: /opt/bitnami/redis/secrets/
@@ -299,11 +299,11 @@ spec:
           {{- else }}
           command:
             - /bin/bash
-            - -c
+            - -ec
             - |
-              if [[ -f '/secrets/redis-password' ]]; then
-              export REDIS_PASSWORD=$(cat /secrets/redis-password)
-              fi
+              {{- if and .Values.auth.enabled .Values.auth.usePasswordFiles }}
+              export REDIS_PASSWORD="$(< $REDIS_PASSWORD_FILE)"
+              {{- end }}
               redis_exporter{{- range $key, $value := .Values.metrics.extraArgs }} --{{ $key }}={{ $value }}{{- end }}
           {{- end }}
           {{- if .Values.diagnosticMode.enabled }}
@@ -315,7 +315,10 @@ spec:
             {{- if .Values.auth.enabled }}
             - name: REDIS_USER
               value: default
-            {{- if (not .Values.auth.usePasswordFiles) }}
+            {{- if .Values.auth.usePasswordFiles }}
+            - name: REDIS_PASSWORD_FILE
+              value: "/secrets/redis-password"
+            {{- else }}
             - name: REDIS_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -369,7 +372,7 @@ spec:
           resources: {{- toYaml .Values.metrics.resources | nindent 12 }}
           {{- end }}
           volumeMounts:
-            {{- if .Values.auth.usePasswordFiles }}
+            {{- if and .Values.auth.enabled .Values.auth.usePasswordFiles }}
             - name: redis-password
               mountPath: /secrets/
             {{- end }}
@@ -461,8 +464,6 @@ spec:
             - configMap:
                 name: {{ printf "%s-lib-redis-scripts" (include "common.names.fullname" .) }}
                 items:
-                  - key: libbitnami.sh
-                    path: libbitnami.sh
                   - key: libfile.sh
                     path: libfile.sh
                   - key: libfs.sh
@@ -475,8 +476,6 @@ spec:
                     path: libnet.sh
                   - key: libos.sh
                     path: libos.sh
-                  - key: libpersistence.sh
-                    path: libpersistence.sh
                   - key: libredis.sh
                     path: libredis.sh
                   - key: libservice.sh
@@ -485,8 +484,6 @@ spec:
                     path: libvalidations.sh
                   - key: libversion.sh
                     path: libversion.sh
-                  - key: libwebserver.sh
-                    path: libwebserver.sh
                   - key: redis-env.sh
                     path: redis-env.sh
                   - key: entrypoint.sh
@@ -502,28 +499,22 @@ spec:
                 items:
                   - key: start-master.sh
                     path: start-scripts/start-master.sh
-                  # - key: start-node.sh
-                  #   path: start-scripts/start-node.sh
-                  # - key: start-sentinel.sh # 
-                  #   path: start-scripts/start-sentinel.sh # 
-                  # - key: prestop-sentinel.sh # 
-                  #   path: start-scripts/prestop-sentinel.sh # 
-                  # - key: prestop-redis.sh
-                  #   path: start-scripts/prestop-redis.sh
-                  # - key: start-replica.sh # 
-                  #   path: start-scripts/start-replica.sh # 
         {{- end }}
         - name: health
           configMap:
             name: {{ printf "%s-health" (include "common.names.fullname" .) }}
             defaultMode: 0755
-        {{- if .Values.auth.usePasswordFiles }}
+        {{- if and .Values.auth.enabled .Values.auth.usePasswordFiles }}
         - name: redis-password
+          {{ if .Values.auth.usePasswordFileFromSecret }}
           secret:
             secretName: {{ template "redis.secretName" . }}
             items:
             - key: {{ template "redis.secretPasswordKey" . }}
               path: redis-password
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
         {{- end }}
         - name: config
           configMap:
@@ -623,4 +614,5 @@ spec:
         {{- end }}
         {{- include "common.storage.class" (dict "persistence" .Values.master.persistence "global" .Values.global) | nindent 8 }}
   {{- end }}
+{{- end }}
 {{- end }}

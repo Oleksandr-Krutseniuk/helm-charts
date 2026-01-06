@@ -1,29 +1,3 @@
-image:
-  bitnami: true
-  # bitnami: false
-  registry: docker.io
-  repository: bitnamilegacy/redis
-  tag: 8.2.1-debian-12-r0
-  digest: ""
-  ## Specify a imagePullPolicy
-  ## ref: https://kubernetes.io/docs/concepts/containers/images/#pre-pulled-images
-  ##
-  pullPolicy: IfNotPresent
-  ## Optionally specify an array of imagePullSecrets.
-  ## Secrets must be manually created in the namespace.
-  ## ref: https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/
-  ## e.g:
-  ## pullSecrets:
-  ##   - myRegistryKeySecretName
-  ##
-  pullSecrets: []
-  ## Enable debug mode
-  ##
-  debug: false
-## @section Redis(R) common configuration parameters
-## https://github.com/bitnami/containers/tree/main/bitnami/redis#configuration
-##
-
 # Copyright Broadcom, Inc. All Rights Reserved.
 # SPDX-License-Identifier: APACHE-2.0
 
@@ -137,20 +111,41 @@ diagnosticMode:
 ## @param image.pullSecrets Redis(R) image pull secrets
 ## @param image.debug Enable image debug mode
 ##
-
+image:
+  bitnami: true
+  registry: docker.io
+  repository: bitnami/redis
+  tag: 8.2.1-debian-12-r0
+  digest: ""
+  ## Specify a imagePullPolicy
+  ## ref: https://kubernetes.io/docs/concepts/containers/images/#pre-pulled-images
+  ##
+  pullPolicy: IfNotPresent
+  ## Optionally specify an array of imagePullSecrets.
+  ## Secrets must be manually created in the namespace.
+  ## ref: https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/
+  ## e.g:
+  ## pullSecrets:
+  ##   - myRegistryKeySecretName
+  ##
+  pullSecrets: []
+  ## Enable debug mode
+  ##
+  debug: false
+## @section Redis(R) common configuration parameters
+## https://github.com/bitnami/containers/tree/main/bitnami/redis#configuration
+##
 
 ## @param architecture Redis(R) architecture. Allowed values: `standalone` or `replication`
 ##
-# architecture: replication
-architecture: standalone
+architecture: replication
 ## Redis(R) Authentication parameters
 ## ref: https://github.com/bitnami/containers/tree/main/bitnami/redis#setting-the-server-password-on-first-run
 ##
 auth:
   ## @param auth.enabled Enable password authentication
   ##
-  # enabled: true
-  enabled: false
+  enabled: true
   ## @param auth.sentinel Enable authentication on sentinels too
   ##
   sentinel: true
@@ -168,12 +163,10 @@ auth:
   existingSecretPasswordKey: ""
   ## @param auth.usePasswordFiles Mount credentials as files instead of using an environment variable
   ##
-  usePasswordFiles: false
-  # usePasswordFiles: true
+  usePasswordFiles: true
   ## @param auth.usePasswordFileFromSecret Mount password file from secret
   ##
-  # usePasswordFileFromSecret: true
-  usePasswordFileFromSecret: false
+  usePasswordFileFromSecret: true
   ## Redis ACL restricts connections by limiting commands and key access with auth management.
   ## ref: https://redis.io/docs/latest/operate/oss_and_stack/management/security/acl/
   ##
@@ -1139,6 +1132,26 @@ replica:
     ## @param replica.autoscaling.targetMemory Percentage of Memory to consider when autoscaling
     ##
     targetMemory: ""
+    ## HPA behavior customization, example:
+    # behavior:
+    #   scaleUp:
+    #     stabilizationWindowSeconds: 0
+    #     policies:
+    #     - type: Percent
+    #       value: 100
+    #       periodSeconds: 15
+    #     - type: Pods
+    #       value: 4
+    #       periodSeconds: 15
+    #     selectPolicy: Max
+    #   scaleDown:
+    #     stabilizationWindowSeconds: 480
+    #     policies:
+    #     - type: Percent
+    #       value: 100
+    #       periodSeconds: 15
+    behavior: {}
+
   ## ServiceAccount configuration
   ##
   serviceAccount:
@@ -1645,7 +1658,7 @@ networkPolicy:
   allowExternal: true
   ## @param networkPolicy.allowExternalEgress Allow the pod to access any range of port and all destinations.
   ##
-  allowExternalEgress: true
+  allowExternalEgress: false
   ## @param networkPolicy.extraIngress Add extra ingress rules to the NetworkPolicy
   ## e.g:
   ## extraIngress:

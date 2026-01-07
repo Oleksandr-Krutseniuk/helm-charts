@@ -36,7 +36,7 @@ replica:
   persistence:
     enabled: false
   podAnnotations:
-    cluster-autoscaler.kubernetes.io/safe-to-evict-local-volumes: sentinel-data,empty-dir,redis-data
+    cluster-autoscaler.kubernetes.io/safe-to-evict-local-volumes: sentinel-data,redis-tmp-conf,tmp,redis-data
   podAntiAffinityPreset: hard
   replicaCount: 3
   resources:

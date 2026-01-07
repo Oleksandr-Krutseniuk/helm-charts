@@ -1,6 +1,9 @@
 architecture: replication
 auth:
   enabled: false
+  sentinel: false
+  usePasswordFileFromSecret: false
+  usePasswordFiles: false
 commonConfiguration: |-
   appendonly no
   save ""
@@ -51,3 +54,6 @@ sentinel:
     requests:
       cpu: 50m
       memory: 16Mi
+networkPolicy:
+  allowExternal: true
+  allowExternalEgress: true

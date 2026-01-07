@@ -215,12 +215,12 @@ data:
     "$script_dir/ping_liveness_master.sh" $1 || exit_status=$?
     exit $exit_status
 ---
-# Source: redis/templates/master/serviceaccount.yaml
+# Source: redis/templates/serviceaccount.yaml
 apiVersion: v1
 kind: ServiceAccount
 automountServiceAccountToken: false
 metadata:
-  name: golden-file-test-redis-master
+  name: golden-file-test-redis
   namespace: "test-namespace"
   labels:
     app.kubernetes.io/instance: golden-file-test
@@ -248,7 +248,7 @@ spec:
   type: ClusterIP
   ports:
     - name: http-metrics
-      port: 
+      port: 9121
       protocol: TCP
       targetPort: metrics
   selector:
@@ -325,20 +325,27 @@ spec:
           labels:
             severity: error
 ---
-# Source: redis/templates/replicas/serviceaccount.yaml
-apiVersion: v1
-kind: ServiceAccount
-automountServiceAccountToken: false
+# Source: redis/templates/sentinel/pdb.yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
 metadata:
-  name: golden-file-test-redis-replica
+  name: golden-file-test-redis-node
   namespace: "test-namespace"
   labels:
     app.kubernetes.io/instance: golden-file-test
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/name: redis
     app.kubernetes.io/version: 7.2.1
+    app.kubernetes.io/component: node
   annotations:
     argocd.argoproj.io/sync-wave: "-5"
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: golden-file-test
+      app.kubernetes.io/name: redis
+      app.kubernetes.io/component: node
 ---
 # Source: redis/templates/scripts-configmap.yaml
 apiVersion: v1
@@ -356,7 +363,7 @@ metadata:
 data:
   start-node.sh: |
     #!/bin/bash
-
+    
     . /opt/bitnami/scripts/libos.sh
     . /opt/bitnami/scripts/liblog.sh
     . /opt/bitnami/scripts/libvalidations.sh
@@ -439,6 +446,7 @@ data:
     master_port_in_persisted_conf="$REDIS_MASTER_PORT_NUMBER"
     master_in_sentinel="$(get_sentinel_master_info)"
     redisRetVal=$?
+    
     if [[ -f /opt/bitnami/redis-sentinel/etc/sentinel.conf ]]; then
         master_in_persisted_conf="$(awk '/monitor/ {print $4}' /opt/bitnami/redis-sentinel/etc/sentinel.conf)"
         master_port_in_persisted_conf="$(awk '/monitor/ {print $5}' /opt/bitnami/redis-sentinel/etc/sentinel.conf)"
@@ -481,7 +489,7 @@ data:
       REDIS_MASTER_HOST="$REDIS_EXTERNAL_MASTER_HOST"
       REDIS_MASTER_PORT_NUMBER="${REDIS_EXTERNAL_MASTER_PORT}"
     fi
-
+    
     if [[ -f /opt/bitnami/redis/mounted-etc/replica.conf ]];then
         cp /opt/bitnami/redis/mounted-etc/replica.conf /opt/bitnami/redis/etc/replica.conf
     fi
@@ -493,6 +501,7 @@ data:
     echo "" >> /opt/bitnami/redis/etc/replica.conf
     echo "replica-announce-port $REDISPORT" >> /opt/bitnami/redis/etc/replica.conf
     echo "replica-announce-ip $(get_full_hostname "$HOSTNAME")" >> /opt/bitnami/redis/etc/replica.conf
+    
     ARGS=("--port" "${REDIS_PORT}")
 
     if [[ "$REDIS_REPLICATION_MODE" = "slave" ]] || [[ "$REDIS_REPLICATION_MODE" = "replica" ]]; then
@@ -505,7 +514,7 @@ data:
 
   start-sentinel.sh: |
     #!/bin/bash
-
+    
     . /opt/bitnami/scripts/libos.sh
     . /opt/bitnami/scripts/libvalidations.sh
     . /opt/bitnami/scripts/libfile.sh
@@ -553,7 +562,7 @@ data:
         value="${value//&/\\&}"
         value="${value//\?/\\?}"
         [[ "$value" = "" ]] && value="\"$value\""
-
+        
         replace_in_file "/opt/bitnami/redis-sentinel/etc/sentinel.conf" "^#*\s*${key} .*" "${key} ${value}" false
     }
     sentinel_conf_add() {
@@ -575,6 +584,7 @@ data:
     [[ -f $REDIS_PASSWORD_FILE ]] && export REDIS_PASSWORD="$(< "${REDIS_PASSWORD_FILE}")"
 
     master_in_persisted_conf="$(get_full_hostname "$HOSTNAME")"
+    
     if [[ -f /opt/bitnami/redis-sentinel/etc/sentinel.conf ]]; then
         check_lock_file() {
             [[ -f /opt/bitnami/redis-sentinel/etc/.node_read ]]
@@ -585,6 +595,7 @@ data:
         info "Found previous master $master_in_persisted_conf in /opt/bitnami/redis-sentinel/etc/sentinel.conf"
         debug "$(cat /opt/bitnami/redis-sentinel/etc/sentinel.conf | grep monitor)"
     fi
+    
     if ! get_sentinel_master_info && [[ "$master_in_persisted_conf" == "$(get_full_hostname "$HOSTNAME")" ]]; then
         # No master found, lets create a master node
         export REDIS_REPLICATION_MODE="master"
@@ -605,9 +616,11 @@ data:
       REDIS_MASTER_HOST="$REDIS_EXTERNAL_MASTER_HOST"
       REDIS_MASTER_PORT_NUMBER="${REDIS_EXTERNAL_MASTER_PORT}"
     fi
-
+    
     cp /opt/bitnami/redis-sentinel/mounted-etc/sentinel.conf /opt/bitnami/redis-sentinel/etc/sentinel.conf
+    
     printf "\nsentinel myid %s" "$(host_id "$HOSTNAME")" >> /opt/bitnami/redis-sentinel/etc/sentinel.conf
+    
 
     if [[ -z "$REDIS_MASTER_HOST" ]] || [[ -z "$REDIS_MASTER_PORT_NUMBER" ]]
     then
@@ -642,19 +655,20 @@ data:
         add_known_sentinel "$hostname" "$ip"
         add_known_replica "$hostname" "$ip"
     done
-
+    
     echo "" >> /opt/bitnami/redis-sentinel/etc/sentinel.conf
     echo "sentinel announce-hostnames yes" >> /opt/bitnami/redis-sentinel/etc/sentinel.conf
     echo "sentinel resolve-hostnames yes" >> /opt/bitnami/redis-sentinel/etc/sentinel.conf
     echo "sentinel announce-port $SERVPORT" >> /opt/bitnami/redis-sentinel/etc/sentinel.conf
     echo "sentinel announce-ip $(get_full_hostname "$HOSTNAME")" >> /opt/bitnami/redis-sentinel/etc/sentinel.conf
+    
     exec redis-server /opt/bitnami/redis-sentinel/etc/sentinel.conf --sentinel
   prestop-sentinel.sh: |
     #!/bin/bash
-
+    
     . /opt/bitnami/scripts/libvalidations.sh
     . /opt/bitnami/scripts/libos.sh
-
+    
     HEADLESS_SERVICE="golden-file-test-redis-headless.test-namespace.svc.cluster.local"
 
     get_full_hostname() {
@@ -694,10 +708,10 @@ data:
     fi
   prestop-redis.sh: |
     #!/bin/bash
-
+    
     . /opt/bitnami/scripts/libvalidations.sh
     . /opt/bitnami/scripts/libos.sh
-
+    
     run_redis_command() {
         if is_boolean_yes "$REDIS_TLS_ENABLED"; then
             redis-cli -h 127.0.0.1 -p "$REDIS_TLS_PORT" --tls --cert "$REDIS_TLS_CERT_FILE" --key "$REDIS_TLS_KEY_FILE" --cacert "$REDIS_TLS_CA_FILE" "$@"
@@ -818,7 +832,7 @@ spec:
       annotations:
         checksum/configmap: f24dfec7661e4e05347972c52af19022bea9eba122fe0300c5e5cffda3bd421a
         checksum/health: d626f1cf63e2ea3e4d4206c57ff10b4eba5530de26431ac09f484ae8d13d3196
-        checksum/scripts: dd77aeae9fadbabd213c8171a26931faad965e69cd6500a512afbd22087788f2
+        checksum/scripts: 4df1ac7ddb47cb9d538c1ca2299d7d30b42db440c67bdbe59530be7725d0a703
         checksum/secret: 44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a
         prometheus.io/port: "9121"
         prometheus.io/scrape: "true"
@@ -944,8 +958,6 @@ spec:
               mountPath: /health
             - name: sentinel-data
               mountPath: /opt/bitnami/redis-sentinel/etc
-            - name: redis-password
-              mountPath: /opt/bitnami/redis/secrets/
             - name: redis-data
               mountPath: /data
             - name: config
@@ -1033,8 +1045,6 @@ spec:
               mountPath: /health
             - name: sentinel-data
               mountPath: /opt/bitnami/redis-sentinel/etc
-            - name: redis-password
-              mountPath: /opt/bitnami/redis/secrets/
             - name: redis-data
               mountPath: /data
             - name: config
@@ -1056,11 +1066,8 @@ spec:
               type: RuntimeDefault
           command:
             - /bin/bash
-            - -c
+            - -ec
             - |
-              if [[ -f '/secrets/redis-password' ]]; then
-                  export REDIS_PASSWORD=$(cat /secrets/redis-password)
-              fi
               redis_exporter
           env:
             - name: REDIS_ALIAS
@@ -1086,8 +1093,6 @@ spec:
               path: /
               port: metrics
           volumeMounts:
-            - name: redis-password
-              mountPath: /secrets/
       volumes:
         - name: start-scripts
           configMap:
@@ -1097,12 +1102,6 @@ spec:
           configMap:
             name: golden-file-test-redis-health
             defaultMode: 0755
-        - name: redis-password
-          secret:
-            secretName: golden-file-test-redis
-            items:
-            - key: redis-password
-              path: redis-password
         - name: config
           configMap:
             name: golden-file-test-redis-configuration

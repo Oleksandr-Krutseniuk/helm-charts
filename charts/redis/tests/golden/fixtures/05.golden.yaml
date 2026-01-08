@@ -1,0 +1,728 @@
+---
+# Source: redis/templates/networkpolicy.yaml
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: golden-file-test-redis
+  namespace: "test-namespace"
+  labels:
+    app.kubernetes.io/instance: golden-file-test
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/version: 7.2.1
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: golden-file-test
+      app.kubernetes.io/name: redis
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    - {}
+  ingress:
+    # Allow inbound connections
+    - ports:
+        - port: 6379
+    # Allow prometheus scrapes for metrics
+    - ports:
+        - port: 9121
+---
+# Source: redis/templates/replicas/pdb.yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: golden-file-test-redis-replicas
+  namespace: "test-namespace"
+  labels:
+    app.kubernetes.io/instance: golden-file-test
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/version: 7.2.1
+    app.kubernetes.io/component: replica
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: golden-file-test
+      app.kubernetes.io/name: redis
+      app.kubernetes.io/component: replica
+---
+# Source: redis/templates/replicas/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+automountServiceAccountToken: false
+metadata:
+  name: golden-file-test-redis-replica
+  namespace: "test-namespace"
+  labels:
+    app.kubernetes.io/instance: golden-file-test
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/version: 7.2.1
+---
+# Source: redis/templates/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: golden-file-test-redis-configuration
+  namespace: "test-namespace"
+  labels:
+    app.kubernetes.io/instance: golden-file-test
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/version: 7.2.1
+data:
+  redis.conf: |-
+    # User-supplied common configuration:
+    appendonly no
+    save ""
+    # End of common configuration
+  master.conf: |-
+    dir /data
+    # User-supplied master configuration:
+    rename-command FLUSHDB ""
+    rename-command FLUSHALL ""
+    # End of master configuration
+  replica.conf: |-
+    dir /data
+    # User-supplied replica configuration:
+    rename-command FLUSHDB ""
+    rename-command FLUSHALL ""
+    # End of replica configuration
+---
+# Source: redis/templates/health-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: golden-file-test-redis-health
+  namespace: "test-namespace"
+  labels:
+    app.kubernetes.io/instance: golden-file-test
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/version: 7.2.1
+data:
+  ping_readiness_local.sh: |-
+    #!/bin/bash
+
+    [[ -f $REDIS_PASSWORD_FILE ]] && export REDIS_PASSWORD="$(< "${REDIS_PASSWORD_FILE}")"
+    [[ -n "$REDIS_PASSWORD" ]] && export REDISCLI_AUTH="$REDIS_PASSWORD"
+    response=$(
+      timeout -s 15 $1 \
+      redis-cli \
+        -h localhost \
+        -p $REDIS_PORT \
+        ping
+    )
+    if [ "$?" -eq "124" ]; then
+      echo "Timed out"
+      exit 1
+    fi
+    if [ "$response" != "PONG" ]; then
+      echo "$response"
+      exit 1
+    fi
+  ping_liveness_local.sh: |-
+    #!/bin/bash
+
+    [[ -f $REDIS_PASSWORD_FILE ]] && export REDIS_PASSWORD="$(< "${REDIS_PASSWORD_FILE}")"
+    [[ -n "$REDIS_PASSWORD" ]] && export REDISCLI_AUTH="$REDIS_PASSWORD"
+    response=$(
+      timeout -s 15 $1 \
+      redis-cli \
+        -h localhost \
+        -p $REDIS_PORT \
+        ping
+    )
+    if [ "$?" -eq "124" ]; then
+      echo "Timed out"
+      exit 1
+    fi
+    responseFirstWord=$(echo $response | head -n1 | awk '{print $1;}')
+    if [ "$response" != "PONG" ] && [ "$responseFirstWord" != "LOADING" ] && [ "$responseFirstWord" != "MASTERDOWN" ]; then
+      echo "$response"
+      exit 1
+    fi
+  ping_readiness_master.sh: |-
+    #!/bin/bash
+
+    [[ -f $REDIS_MASTER_PASSWORD_FILE ]] && export REDIS_MASTER_PASSWORD="$(< "${REDIS_MASTER_PASSWORD_FILE}")"
+    [[ -n "$REDIS_MASTER_PASSWORD" ]] && export REDISCLI_AUTH="$REDIS_MASTER_PASSWORD"
+    response=$(
+      timeout -s 15 $1 \
+      redis-cli \
+        -h $REDIS_MASTER_HOST \
+        -p $REDIS_MASTER_PORT_NUMBER \
+        ping
+    )
+    if [ "$?" -eq "124" ]; then
+      echo "Timed out"
+      exit 1
+    fi
+    if [ "$response" != "PONG" ]; then
+      echo "$response"
+      exit 1
+    fi
+  ping_liveness_master.sh: |-
+    #!/bin/bash
+
+    [[ -f $REDIS_MASTER_PASSWORD_FILE ]] && export REDIS_MASTER_PASSWORD="$(< "${REDIS_MASTER_PASSWORD_FILE}")"
+    [[ -n "$REDIS_MASTER_PASSWORD" ]] && export REDISCLI_AUTH="$REDIS_MASTER_PASSWORD"
+    response=$(
+      timeout -s 15 $1 \
+      redis-cli \
+        -h $REDIS_MASTER_HOST \
+        -p $REDIS_MASTER_PORT_NUMBER \
+        ping
+    )
+    if [ "$?" -eq "124" ]; then
+      echo "Timed out"
+      exit 1
+    fi
+    responseFirstWord=$(echo $response | head -n1 | awk '{print $1;}')
+    if [ "$response" != "PONG" ] && [ "$responseFirstWord" != "LOADING" ]; then
+      echo "$response"
+      exit 1
+    fi
+  ping_readiness_local_and_master.sh: |-
+    script_dir="$(dirname "$0")"
+    exit_status=0
+    "$script_dir/ping_readiness_local.sh" $1 || exit_status=$?
+    "$script_dir/ping_readiness_master.sh" $1 || exit_status=$?
+    exit $exit_status
+  ping_liveness_local_and_master.sh: |-
+    script_dir="$(dirname "$0")"
+    exit_status=0
+    "$script_dir/ping_liveness_local.sh" $1 || exit_status=$?
+    "$script_dir/ping_liveness_master.sh" $1 || exit_status=$?
+    exit $exit_status
+---
+# Source: redis/templates/scripts-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: golden-file-test-redis-scripts
+  namespace: "test-namespace"
+  labels:
+    app.kubernetes.io/instance: golden-file-test
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/version: 7.2.1
+data:
+  start-master.sh: |
+    #!/bin/bash
+
+    [[ -f $REDIS_PASSWORD_FILE ]] && export REDIS_PASSWORD="$(< "${REDIS_PASSWORD_FILE}")"
+    
+    if [[ -f /etc/mounted/redis/master.conf ]];then
+        cp /etc/mounted/redis/master.conf /etc/redis/master.conf
+    fi
+    if [[ -f /etc/mounted/redis/redis.conf ]];then
+        cp /etc/mounted/redis/redis.conf /etc/redis/redis.conf
+    fi
+    
+    ARGS=("--port" "${REDIS_PORT}")
+    ARGS+=("--protected-mode" "no")
+    
+    ARGS+=("--include" "/etc/redis/redis.conf")
+    ARGS+=("--include" "/etc/redis/master.conf")
+    
+    modules_dir="/usr/local/lib/redis/modules"
+    if [[ -d "$modules_dir" ]]; then
+    for module in "$modules_dir"/*.so; do
+        [[ -d "$module" ]] && { echo "Skipping module $module: is a directory."; continue; }
+        [[ -s "$module" ]] || { echo "Skipping $module: module has no size"; continue; }
+        [[ -r "$module" ]] || { echo "Skipping $module: not readable"; continue; }
+        [[ -x "$module" ]] || { echo "Warning: Skipping $module: not executable"; }
+        ARGS+=("--loadmodule" "$module")
+    done
+    fi
+    exec redis-server "${ARGS[@]}"
+  start-replica.sh: |
+    #!/bin/bash
+
+    get_port() {
+        hostname="$1"
+        type="$2"
+
+        port_var=$(echo "${hostname^^}_SERVICE_PORT_$type" | sed "s/-/_/g")
+        port=${!port_var}
+
+        if [ -z "$port" ]; then
+            case $type in
+                "SENTINEL")
+                    echo 26379
+                    ;;
+                "REDIS")
+                    echo 6379
+                    ;;
+            esac
+        else
+            echo $port
+        fi
+    }
+
+    get_full_hostname() {
+        hostname="$1"
+        full_hostname="${hostname}.${HEADLESS_SERVICE}"
+        echo "${full_hostname}"
+    }
+
+    REDISPORT=$(get_port "$HOSTNAME" "REDIS")
+    HEADLESS_SERVICE="golden-file-test-redis-headless.test-namespace.svc.cluster.local"
+
+    [[ -f $REDIS_PASSWORD_FILE ]] && export REDIS_PASSWORD="$(< "${REDIS_PASSWORD_FILE}")"
+    [[ -f $REDIS_MASTER_PASSWORD_FILE ]] && export REDIS_MASTER_PASSWORD="$(< "${REDIS_MASTER_PASSWORD_FILE}")"
+    
+    if [[ -f /etc/mounted/redis/replica.conf ]];then
+        cp /etc/mounted/redis/replica.conf /etc/redis/replica.conf
+    fi
+    if [[ -f /etc/mounted/redis/redis.conf ]];then
+        cp /etc/mounted/redis/redis.conf /etc/redis/redis.conf
+    fi
+    echo "" >> /etc/redis/replica.conf
+    echo "replica-announce-port $REDISPORT" >> /etc/redis/replica.conf
+    echo "replica-announce-ip $(get_full_hostname "$HOSTNAME")" >> /etc/redis/replica.conf
+    
+    ARGS=("--port" "${REDIS_PORT}")
+    ARGS+=("--replicaof" "${REDIS_MASTER_HOST}" "${REDIS_MASTER_PORT_NUMBER}")
+    ARGS+=("--protected-mode" "no")
+    ARGS+=("--include" "/etc/redis/redis.conf")
+    ARGS+=("--include" "/etc/redis/replica.conf")
+    ARGS+=("--protected-mode no")
+    ARGS+=("--replica-priority 0")
+    ARGS+=("--replica-announced no")
+    ARGS+=("--databases 64")
+    ARGS+=("--io-threads 2")
+    ARGS+=("--repl-diskless-load on-empty-db")
+    
+    modules_dir="/usr/local/lib/redis/modules"
+    if [[ -d "$modules_dir" ]]; then
+    for module in "$modules_dir"/*.so; do
+        [[ -d "$module" ]] && { echo "Skipping module $module: is a directory."; continue; }
+        [[ -s "$module" ]] || { echo "Skipping $module: module has no size"; continue; }
+        [[ -r "$module" ]] || { echo "Skipping $module: not readable"; continue; }
+        [[ -x "$module" ]] || { echo "Warning: Skipping $module: not executable"; }
+        ARGS+=("--loadmodule" "$module")
+    done
+    fi
+    exec redis-server "${ARGS[@]}"
+---
+# Source: redis/templates/headless-svc.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: golden-file-test-redis-headless
+  namespace: "test-namespace"
+  labels:
+    app.kubernetes.io/instance: golden-file-test
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/version: 7.2.1
+  annotations:
+    
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - name: tcp-redis
+      port: 6379
+      targetPort: redis
+  selector:
+    app.kubernetes.io/instance: golden-file-test
+    app.kubernetes.io/name: redis
+---
+# Source: redis/templates/metrics-svc.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: golden-file-test-redis-metrics
+  namespace: "test-namespace"
+  labels:
+    app.kubernetes.io/instance: golden-file-test
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/version: 7.2.1
+    app.kubernetes.io/component: metrics
+spec:
+  type: ClusterIP
+  ports:
+    - name: http-metrics
+      port: 9121
+      protocol: TCP
+      targetPort: metrics
+  selector:
+    app.kubernetes.io/instance: golden-file-test
+    app.kubernetes.io/name: redis
+---
+# Source: redis/templates/replicas/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: golden-file-test-redis-replicas
+  namespace: "test-namespace"
+  labels:
+    app.kubernetes.io/instance: golden-file-test
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/version: 7.2.1
+    app.kubernetes.io/component: replica
+spec:
+  type: ClusterIP
+  internalTrafficPolicy: Cluster
+  sessionAffinity: None
+  ports:
+    - name: tcp-redis
+      port: 6379
+      targetPort: redis
+      nodePort: null
+  selector:
+    app.kubernetes.io/instance: golden-file-test
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/component: replica
+---
+# Source: redis/templates/replicas/hpa.yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: golden-file-test-redis-replicas
+  namespace: "test-namespace"
+  labels:
+    app.kubernetes.io/instance: golden-file-test
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/version: 7.2.1
+    app.kubernetes.io/component: replica
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: golden-file-test-redis-replicas
+  minReplicas: 2
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 45
+---
+# Source: redis/templates/replicas/statefulset.yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: golden-file-test-redis-replicas
+  namespace: "test-namespace"
+  labels:
+    app.kubernetes.io/instance: golden-file-test
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/version: 7.2.1
+    app.kubernetes.io/component: replica
+spec:
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: golden-file-test
+      app.kubernetes.io/name: redis
+      app.kubernetes.io/component: replica
+  serviceName: golden-file-test-redis-headless
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: golden-file-test
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: redis
+        app.kubernetes.io/version: 7.2.1
+        app.kubernetes.io/component: replica
+      annotations:
+        checksum/configmap: b80a98d43003b6ba444715c5099f8debc2981ec5c6f2de25b6b3b46c414885c3
+        checksum/health: aff24913d801436ea469d8d374b2ddb3ec4c43ee7ab24663d5f8ff1a1b6991a9
+        checksum/scripts: 56f32286f362d6d637cc032c3d5412604f0c72e6eafb22756b27666e9fd89edd
+        checksum/secret: 44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a
+        prometheus.io/port: "9121"
+        prometheus.io/scrape: "true"
+    spec:
+      
+      securityContext:
+        fsGroup: 1001
+        fsGroupChangePolicy: Always
+        supplementalGroups: []
+        sysctls: []
+      serviceAccountName: golden-file-test-redis-replica
+      automountServiceAccountToken: false
+      affinity:
+        podAffinity:
+          
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app.kubernetes.io/instance: golden-file-test
+                  app.kubernetes.io/name: redis
+                  app.kubernetes.io/component: replica
+              topologyKey: kubernetes.io/hostname
+        nodeAffinity:
+          
+      nodeSelector:
+        dedicated: redispool
+      tolerations:
+        - effect: NoSchedule
+          key: dedicated
+          operator: Equal
+          value: RedisPool
+      enableServiceLinks: true
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: redis
+          image: docker.io/library/redis:8.4.0
+          imagePullPolicy: "IfNotPresent"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsGroup: 1001
+            runAsNonRoot: true
+            runAsUser: 1001
+            seLinuxOptions: {}
+            seccompProfile:
+              type: RuntimeDefault
+          command:
+            - /bin/bash
+          args:
+            - -c
+            - /etc/redis_scripts/start-scripts/start-replica.sh
+          env:
+            - name: REDIS_REPLICATION_MODE
+              value: replica
+            - name: REDIS_MASTER_HOST
+              value: "external-intance-hostname.example.com"
+            - name: REDIS_MASTER_PORT_NUMBER
+              value: "6379"
+            - name: ALLOW_EMPTY_PASSWORD
+              value: "yes"
+            - name: REDIS_TLS_ENABLED
+              value: "no"
+            - name: REDIS_PORT
+              value: "6379"
+          ports:
+            - name: redis
+              containerPort: 6379
+          startupProbe:
+            exec:
+              command:
+              - /bin/bash
+              - -c
+              - |
+                redis-cli INFO replication -p $REDIS_PORT \
+                | grep -Eq '^(master_sync_(total_bytes|read_bytes|left_bytes|perc):|master_link_status:down)' \
+                && exit 1 || exit 0
+            failureThreshold: 600
+            initialDelaySeconds: 1
+            periodSeconds: 1
+            successThreshold: 1
+            timeoutSeconds: 5
+          livenessProbe:
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 6
+            successThreshold: 1
+            failureThreshold: 5
+            exec:
+              command:
+                - sh
+                - -c
+                - /health/ping_liveness_local_and_master.sh 5
+          readinessProbe:
+            initialDelaySeconds: 0
+            periodSeconds: 20
+            timeoutSeconds: 6
+            successThreshold: 1
+            failureThreshold: 5
+            exec:
+              command:
+                - sh
+                - -c
+                - /health/ping_readiness_local_and_master.sh 5
+          resources:
+            requests:
+              cpu: 1
+              ephemeral-storage: 20Gi
+              memory: 6G
+          volumeMounts:
+            - name: redis-scripts
+              mountPath: /etc/redis_scripts
+            - name: health
+              mountPath: /health
+            - name: redis-data
+              mountPath: /data
+            - name: config
+              mountPath: /etc/mounted/redis/
+            - name: redis-tmp-conf
+              mountPath: /etc/redis/
+        - name: metrics
+          image: docker.io/bitnamilegacy/redis-exporter:1.61.0-debian-12-r2
+          imagePullPolicy: "IfNotPresent"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsGroup: 1001
+            runAsNonRoot: true
+            runAsUser: 1001
+            seLinuxOptions: {}
+            seccompProfile:
+              type: RuntimeDefault
+          command:
+            - /bin/bash
+            - -ec
+            - |
+              redis_exporter
+          env:
+            - name: REDIS_ALIAS
+              value: golden-file-test-redis
+          ports:
+            - name: metrics
+              containerPort: 9121
+          livenessProbe:
+            failureThreshold: 5
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 5
+            tcpSocket:
+              port: metrics
+          readinessProbe:
+            failureThreshold: 3
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 1
+            httpGet:
+              path: /
+              port: metrics
+          resources:
+            requests:
+              cpu: 100m
+              ephemeral-storage: 2Gi
+          volumeMounts:
+      initContainers:
+        - name: init-sysctl
+          image: docker.io/bitnamilegacy/os-shell:12-debian-12-r51
+          imagePullPolicy: "IfNotPresent"
+          securityContext:
+            privileged: true
+            runAsUser: 0
+          command:
+            - /bin/sh
+            - -c
+            - |-
+              install_packages procps
+              sysctl -w net.core.somaxconn=10000
+              echo never > /host-sys/kernel/mm/transparent_hugepage/enabled
+          resources:
+            requests:
+              ephemeral-storage: 6Gi
+          volumeMounts:
+            - name: host-sys
+              mountPath: /host-sys
+      volumes:
+        - name: redis-scripts
+          projected:
+            defaultMode: 0755
+            sources:
+            - configMap:
+                name: golden-file-test-redis-lib-redis-scripts
+                items:
+                  - key: libfile.sh
+                    path: libfile.sh
+                  - key: libfs.sh
+                    path: libfs.sh
+                  - key: libhook.sh
+                    path: libhook.sh
+                  - key: liblog.sh
+                    path: liblog.sh
+                  - key: libnet.sh
+                    path: libnet.sh
+                  - key: libos.sh
+                    path: libos.sh
+                  - key: libredis.sh
+                    path: libredis.sh
+                  - key: libservice.sh
+                    path: libservice.sh
+                  - key: libvalidations.sh
+                    path: libvalidations.sh
+                  - key: libversion.sh
+                    path: libversion.sh
+                  - key: redis-env.sh
+                    path: redis-env.sh
+                  - key: entrypoint.sh
+                    path: redis/entrypoint.sh
+                  - key: postunpack.sh
+                    path: redis/postunpack.sh
+                  - key: run.sh
+                    path: redis/run.sh
+                  - key: setup.sh
+                    path: redis/setup.sh
+            - configMap:
+                name: golden-file-test-redis-scripts
+                items:
+                  - key: start-replica.sh
+                    path: start-scripts/start-replica.sh
+        - name: health
+          configMap:
+            name: golden-file-test-redis-health
+            defaultMode: 0755
+        - name: config
+          configMap:
+            name: golden-file-test-redis-configuration
+        - name: host-sys
+          hostPath:
+            path: /sys
+        - name: redis-tmp-conf
+          emptyDir: {}
+        - name: redis-data
+          emptyDir: {}
+---
+# Source: redis/templates/servicemonitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: golden-file-test-redis
+  namespace: "test-namespace"
+  labels:
+    app.kubernetes.io/instance: golden-file-test
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/version: 7.2.1
+spec:
+  endpoints:
+    - port: http-metrics
+      interval: 10s
+      relabelings:
+      - sourceLabels:
+        - __meta_kubernetes_pod_name
+        targetLabel: instance
+      metricRelabelings:
+      - replacement: redis-test
+        targetLabel: org_environment
+      - replacement: redis
+        targetLabel: org_project
+  
+  
+  namespaceSelector:
+    matchNames:
+      - test-namespace
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: golden-file-test
+      app.kubernetes.io/name: redis
+      app.kubernetes.io/component: metrics

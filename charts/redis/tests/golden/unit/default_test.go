@@ -212,3 +212,36 @@ func TestGolden04(t *testing.T) {
 		},
 	})
 }
+
+// non-bitnami version of 02.golden.yaml
+func TestGolden05(t *testing.T) {
+	t.Parallel()
+
+	chartPath, err := filepath.Abs("../../..")
+	require.NoError(t, err)
+
+	suite.Run(t, &golden.TemplateGoldenTest{
+		ChartPath:      chartPath,
+		Release:        "golden-file-test",
+		Namespace:      "test-namespace",
+		GoldenFileName: "05",
+		Templates: []string{
+			"templates/networkpolicy.yaml",
+			"templates/replicas/pdb.yaml",
+			"templates/replicas/serviceaccount.yaml",
+			"templates/configmap.yaml",
+			"templates/health-configmap.yaml",
+			"templates/scripts-configmap.yaml",
+			"templates/headless-svc.yaml",
+			"templates/metrics-svc.yaml",
+			"templates/replicas/service.yaml",
+			"templates/replicas/hpa.yaml",
+			"templates/replicas/statefulset.yaml",
+			"templates/servicemonitor.yaml",
+		},
+		SetValues: defaultSetValues,
+		ValuesFiles: []string{
+			"../../values/05.values.yaml",
+		},
+	})
+}

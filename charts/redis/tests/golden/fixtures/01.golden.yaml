@@ -1,4 +1,67 @@
 ---
+# Source: redis/templates/networkpolicy.yaml
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: golden-file-test-redis
+  namespace: "test-namespace"
+  labels:
+    app.kubernetes.io/instance: golden-file-test
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/version: 7.2.1
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: golden-file-test
+      app.kubernetes.io/name: redis
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    - {}
+  ingress:
+    # Allow inbound connections
+    - ports:
+        - port: 6379
+        - port: 26379
+    # Allow prometheus scrapes for metrics
+    - ports:
+        - port: 9121
+---
+# Source: redis/templates/sentinel/pdb.yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: golden-file-test-redis-node
+  namespace: "test-namespace"
+  labels:
+    app.kubernetes.io/instance: golden-file-test
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/version: 7.2.1
+    app.kubernetes.io/component: node
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: golden-file-test
+      app.kubernetes.io/name: redis
+      app.kubernetes.io/component: node
+---
+# Source: redis/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+automountServiceAccountToken: false
+metadata:
+  name: golden-file-test-redis
+  namespace: "test-namespace"
+  labels:
+    app.kubernetes.io/instance: golden-file-test
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/version: 7.2.1
+---
 # Source: redis/templates/configmap.yaml
 apiVersion: v1
 kind: ConfigMap
@@ -37,34 +100,6 @@ data:
     sentinel parallel-syncs mymaster 1
     # User-supplied sentinel configuration:
     # End of sentinel configuration
----
-# Source: redis/templates/headless-svc.yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: golden-file-test-redis-headless
-  namespace: "test-namespace"
-  labels:
-    app.kubernetes.io/instance: golden-file-test
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/name: redis
-    app.kubernetes.io/version: 7.2.1
-  annotations:
-    
-spec:
-  type: ClusterIP
-  clusterIP: None
-  publishNotReadyAddresses: true
-  ports:
-    - name: tcp-redis
-      port: 6379
-      targetPort: redis
-    - name: tcp-sentinel
-      port: 26379
-      targetPort: redis-sentinel
-  selector:
-    app.kubernetes.io/instance: golden-file-test
-    app.kubernetes.io/name: redis
 ---
 # Source: redis/templates/health-configmap.yaml
 apiVersion: v1
@@ -204,59 +239,6 @@ data:
     "$script_dir/ping_liveness_local.sh" $1 || exit_status=$?
     "$script_dir/ping_liveness_master.sh" $1 || exit_status=$?
     exit $exit_status
----
-# Source: redis/templates/metrics-svc.yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: golden-file-test-redis-metrics
-  namespace: "test-namespace"
-  labels:
-    app.kubernetes.io/instance: golden-file-test
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/name: redis
-    app.kubernetes.io/version: 7.2.1
-    app.kubernetes.io/component: metrics
-spec:
-  type: ClusterIP
-  ports:
-    - name: http-metrics
-      port: 9121
-      protocol: TCP
-      targetPort: metrics
-  selector:
-    app.kubernetes.io/instance: golden-file-test
-    app.kubernetes.io/name: redis
----
-# Source: redis/templates/networkpolicy.yaml
-kind: NetworkPolicy
-apiVersion: networking.k8s.io/v1
-metadata:
-  name: golden-file-test-redis
-  namespace: "test-namespace"
-  labels:
-    app.kubernetes.io/instance: golden-file-test
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/name: redis
-    app.kubernetes.io/version: 7.2.1
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/instance: golden-file-test
-      app.kubernetes.io/name: redis
-  policyTypes:
-    - Ingress
-    - Egress
-  egress:
-    - {}
-  ingress:
-    # Allow inbound connections
-    - ports:
-        - port: 6379
-        - port: 26379
-    # Allow prometheus scrapes for metrics
-    - ports:
-        - port: 9121
 ---
 # Source: redis/templates/scripts-configmap.yaml
 apiVersion: v1
@@ -655,6 +637,57 @@ data:
         exit 0
     fi
 ---
+# Source: redis/templates/headless-svc.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: golden-file-test-redis-headless
+  namespace: "test-namespace"
+  labels:
+    app.kubernetes.io/instance: golden-file-test
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/version: 7.2.1
+  annotations:
+    
+spec:
+  type: ClusterIP
+  clusterIP: None
+  publishNotReadyAddresses: true
+  ports:
+    - name: tcp-redis
+      port: 6379
+      targetPort: redis
+    - name: tcp-sentinel
+      port: 26379
+      targetPort: redis-sentinel
+  selector:
+    app.kubernetes.io/instance: golden-file-test
+    app.kubernetes.io/name: redis
+---
+# Source: redis/templates/metrics-svc.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: golden-file-test-redis-metrics
+  namespace: "test-namespace"
+  labels:
+    app.kubernetes.io/instance: golden-file-test
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/version: 7.2.1
+    app.kubernetes.io/component: metrics
+spec:
+  type: ClusterIP
+  ports:
+    - name: http-metrics
+      port: 9121
+      protocol: TCP
+      targetPort: metrics
+  selector:
+    app.kubernetes.io/instance: golden-file-test
+    app.kubernetes.io/name: redis
+---
 # Source: redis/templates/sentinel/service.yaml
 apiVersion: v1
 kind: Service
@@ -719,7 +752,7 @@ spec:
         checksum/health: d626f1cf63e2ea3e4d4206c57ff10b4eba5530de26431ac09f484ae8d13d3196
         checksum/scripts: 56b854158d3ee62b15594dfc93c0b451bd2f9948f4405e1cbfbb425a275cc6de
         checksum/secret: 44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a
-        cluster-autoscaler.kubernetes.io/safe-to-evict-local-volumes: sentinel-data,empty-dir,redis-data
+        cluster-autoscaler.kubernetes.io/safe-to-evict-local-volumes: sentinel-data,redis-tmp-conf,tmp,redis-data
         prometheus.io/port: "9121"
         prometheus.io/scrape: "true"
     spec:
@@ -1031,36 +1064,3 @@ spec:
       app.kubernetes.io/instance: golden-file-test
       app.kubernetes.io/name: redis
       app.kubernetes.io/component: metrics
----
-# Source: redis/templates/sentinel/pdb.yaml
-apiVersion: policy/v1
-kind: PodDisruptionBudget
-metadata:
-  name: golden-file-test-redis-node
-  namespace: "test-namespace"
-  labels:
-    app.kubernetes.io/instance: golden-file-test
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/name: redis
-    app.kubernetes.io/version: 7.2.1
-    app.kubernetes.io/component: node
-spec:
-  maxUnavailable: 1
-  selector:
-    matchLabels:
-      app.kubernetes.io/instance: golden-file-test
-      app.kubernetes.io/name: redis
-      app.kubernetes.io/component: node
----
-# Source: redis/templates/serviceaccount.yaml
-apiVersion: v1
-kind: ServiceAccount
-automountServiceAccountToken: false
-metadata:
-  name: golden-file-test-redis
-  namespace: "test-namespace"
-  labels:
-    app.kubernetes.io/instance: golden-file-test
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/name: redis
-    app.kubernetes.io/version: 7.2.1

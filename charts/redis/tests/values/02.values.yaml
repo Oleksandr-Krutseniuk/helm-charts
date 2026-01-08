@@ -28,6 +28,11 @@ metrics:
     - sourceLabels:
       - __meta_kubernetes_pod_name
       targetLabel: instance
+    metricRelabelings:
+    - replacement: redis-test
+      targetLabel: org_environment
+    - replacement: redis
+      targetLabel: org_project
 replica:
   autoscaling:
     enabled: true
@@ -114,3 +119,7 @@ sysctl:
 volumePermissions:
   image:
     repository: bitnamilegacy/os-shell
+networkPolicy:
+  enabled: true
+  allowExternal: true
+  allowExternalEgress: true

@@ -1,0 +1,60 @@
+architecture: replication
+auth:
+  enabled: false
+  sentinel: false
+  usePasswordFileFromSecret: false
+  usePasswordFiles: false
+commonConfiguration: |-
+  appendonly no
+  save ""
+image:
+  bitnami: false
+  registry: docker.io
+  repository: library/redis
+  tag: "8.4.0"
+master:
+  count: 1
+  persistence:
+    enabled: false
+metrics:
+  enabled: true
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/redis-exporter
+    tag: 1.61.0-debian-12-r2
+  resources:
+    requests:
+      cpu: 50m
+      memory: 16Mi
+  serviceMonitor:
+    enabled: true
+    interval: 10s
+    relabellings:
+    - sourceLabels:
+      - __meta_kubernetes_pod_name
+      targetLabel: instance
+replica:
+  persistence:
+    enabled: false
+  podAnnotations:
+    cluster-autoscaler.kubernetes.io/safe-to-evict-local-volumes: sentinel-data,redis-tmp-conf,tmp,redis-data
+  podAntiAffinityPreset: hard
+  replicaCount: 3
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+sentinel:
+  enabled: true
+  image:
+    registry: docker.io
+    repository: library/redis
+    tag: "8.4.0"
+  podAntiAffinityPreset: hard
+  resources:
+    requests:
+      cpu: 50m
+      memory: 16Mi
+networkPolicy:
+  allowExternal: true
+  allowExternalEgress: true

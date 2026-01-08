@@ -180,3 +180,35 @@ func TestGoldenExtraDeploy(t *testing.T) {
 		},
 	})
 }
+
+// non-bitnami version of 01.golden.yaml
+func TestGolden04(t *testing.T) {
+	t.Parallel()
+
+	chartPath, err := filepath.Abs("../../..")
+	require.NoError(t, err)
+
+	suite.Run(t, &golden.TemplateGoldenTest{
+		ChartPath:      chartPath,
+		Release:        "golden-file-test",
+		Namespace:      "test-namespace",
+		GoldenFileName: "04",
+		Templates: []string{
+			"templates/networkpolicy.yaml",
+			"templates/sentinel/pdb.yaml",
+			"templates/serviceaccount.yaml",
+			"templates/configmap.yaml",
+			"templates/health-configmap.yaml",
+			"templates/scripts-configmap.yaml",
+			"templates/headless-svc.yaml",
+			"templates/metrics-svc.yaml",
+			"templates/sentinel/service.yaml",
+			"templates/sentinel/statefulset.yaml",
+			"templates/servicemonitor.yaml",
+		},
+		SetValues: defaultSetValues,
+		ValuesFiles: []string{
+			"../../values/04.values.yaml",
+		},
+	})
+}
